@@ -1,0 +1,14 @@
+# <type>(<scope>): <subject>
+#
+# <body>
+#
+# <footer>
+#
+# Types: feat, fix, docs, style, refactor, perf, test, chore, ci
+# Examples:
+#   feat(ai): add Gemini API integration
+#   fix(db): resolve task persistence issue
+#   docs: update README with setup instructions
+#   refactor(frontend): simplify task store logic
+#   chore: update dependencies
+
