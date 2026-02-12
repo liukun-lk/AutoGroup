@@ -34,11 +34,18 @@ function AppContent() {
       {/* Header */}
       <header className="border-b">
         <div className="container max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">AutoGroup</h1>
-            <p className="text-sm text-muted-foreground">
-              动物实验智能分组系统
-            </p>
+          <div className="flex items-center gap-3">
+            <img
+              src="/icon.png"
+              alt="AutoGroup Logo"
+              className="w-16 h-16"
+            />
+            <div>
+              <h1 className="text-2xl font-bold">AutoGroup</h1>
+              <p className="text-sm text-muted-foreground">
+                动物实验智能分组系统
+              </p>
+            </div>
           </div>
 
           {/* Step Indicator */}
