@@ -12,7 +12,6 @@ import { AlertCircle, X } from "lucide-react";
 function AppContent() {
   const [currentStep] = useAtom(currentStepAtom);
   const [error, setError] = useAtom(errorAtom);
-  const [, resetState] = useAtom(resetStateAtom);
 
   const renderStep = () => {
     switch (currentStep) {

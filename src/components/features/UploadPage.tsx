@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import { useAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { datasetAtom, currentStepAtom, setErrorAtom } from "@/stores";
+import { datasetAtom, currentStepAtom, clearErrorAtom } from "@/stores";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -12,13 +12,15 @@ import type { Dataset } from "@/types";
 export function UploadPage() {
   const [dataset, setDataset] = useAtom(datasetAtom);
   const [, setCurrentStep] = useAtom(currentStepAtom);
-  const [, setError] = useAtom(setErrorAtom);
+  const [, clearError] = useAtom(clearErrorAtom);
   const [isLoading, setIsLoading] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
 
   const handleFileSelect = useCallback(async () => {
     try {
       setIsLoading(true);
-      setError(null);
+      clearError();
+      setLocalError(null);
 
       // Open file dialog
       const selected = await open({
@@ -34,7 +36,7 @@ export function UploadPage() {
         return;
       }
 
-      const filePath = typeof selected === 'string' ? selected : selected.path;
+      const filePath = typeof selected === 'string' ? selected : (selected as { path: string }).path;
 
       // Parse Excel file via Tauri
       const result = await invoke<Dataset>("parse_excel", { filePath });
@@ -42,11 +44,12 @@ export function UploadPage() {
       setDataset(result);
       setCurrentStep("configure");
     } catch (error) {
-      setError(error instanceof Error ? error.message : String(error));
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setLocalError(errorMessage);
     } finally {
       setIsLoading(false);
     }
-  }, [setDataset, setCurrentStep, setError]);
+  }, [setDataset, setCurrentStep, clearError]);
 
   return (
     <div className="container max-w-4xl mx-auto py-8">
@@ -58,6 +61,13 @@ export function UploadPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* Local Error Alert */}
+          {localError && (
+            <Alert variant="destructive">
+              <AlertDescription>{localError}</AlertDescription>
+            </Alert>
+          )}
+
           {/* Upload Button */}
           <div className="flex flex-col items-center justify-center py-12 border-2 border-dashed rounded-lg bg-muted/50">
             <Upload className="h-12 w-12 text-muted-foreground mb-4" />
