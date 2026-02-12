@@ -100,13 +100,6 @@ function AppContent() {
 
       {/* Main Content */}
       <main>{renderStep()}</main>
-
-      {/* Footer */}
-      <footer className="border-t mt-8">
-        <div className="container max-w-7xl mx-auto px-4 py-6 text-center text-sm text-muted-foreground">
-          <p>AutoGroup v0.1.0 - Powered by Rust & React</p>
-        </div>
-      </footer>
     </div>
   );
 }
@@ -122,20 +115,18 @@ function StepIndicator({ step, label, active, completed }: StepIndicatorProps) {
   return (
     <div className="flex flex-col items-center gap-1">
       <div
-        className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
-          completed
+        className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${completed
             ? "bg-primary text-primary-foreground"
             : active
-            ? "bg-primary/10 text-primary border-2 border-primary"
-            : "bg-muted text-muted-foreground"
-        }`}
+              ? "bg-primary/10 text-primary border-2 border-primary"
+              : "bg-muted text-muted-foreground"
+          }`}
       >
         {completed ? "✓" : step}
       </div>
       <span
-        className={`text-xs ${
-          active ? "text-foreground font-medium" : "text-muted-foreground"
-        }`}
+        className={`text-xs ${active ? "text-foreground font-medium" : "text-muted-foreground"
+          }`}
       >
         {label}
       </span>
