@@ -107,11 +107,17 @@ export function ConfigurePage() {
   ]);
 
   const toggleIndicator = (indicator: string) => {
-    setSelectedIndicators((prev) =>
-      prev.includes(indicator)
+    setSelectedIndicators((prev) => {
+      // If empty (all selected), clicking should deselect one
+      if (prev.length === 0) {
+        return dataset!.indicator_names.filter((i) => i !== indicator);
+      }
+
+      // Normal toggle behavior
+      return prev.includes(indicator)
         ? prev.filter((i) => i !== indicator)
-        : [...prev, indicator]
-    );
+        : [...prev, indicator];
+    });
   };
 
   const selectAllIndicators = () => {
@@ -290,14 +296,24 @@ export function ConfigurePage() {
             <div>
               <CardTitle>选择参与统计的指标</CardTitle>
               <CardDescription>
-                已选择 {selectedIndicators.length > 0 ? selectedIndicators.length : dataset.indicator_names.length} / {dataset.indicator_names.length} 个指标
+                已选择 {selectedIndicators.length === 0 ? dataset.indicator_names.length : selectedIndicators.length} / {dataset.indicator_names.length} 个指标
               </CardDescription>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={selectAllIndicators}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={selectAllIndicators}
+                disabled={selectedIndicators.length === dataset.indicator_names.length}
+              >
                 全选
               </Button>
-              <Button variant="outline" size="sm" onClick={clearAllIndicators}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={clearAllIndicators}
+                disabled={selectedIndicators.length === 0}
+              >
                 清空
               </Button>
             </div>
