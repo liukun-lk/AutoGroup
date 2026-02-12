@@ -57,18 +57,24 @@ mod export_integration_tests {
             selected_indicators: selected_indicators.clone(),
             alpha: 0.05,
             mode: OptimizationMode::Strict,
+            max_candidates: 10,
         };
 
-        let result = match grouping::compute_optimal_grouping(
+        let multi_result = match grouping::compute_optimal_grouping(
             dataset.clone(),
             group_config,
             stat_config,
         ) {
             Ok(r) => {
                 println!("✓ Grouping completed");
-                println!("  Min P-value: {:.6}", r.summary.min_p_value);
-                println!("  Mean P-value: {:.6}", r.summary.mean_p_value);
-                println!("  Meets criteria: {}", r.summary.meets_criteria);
+                println!("  Candidates found: {}", r.candidates.len());
+                println!("  Total evaluated: {}", r.total_evaluated);
+                println!("  Total valid: {}", r.total_valid);
+                if let Some(best) = r.candidates.first() {
+                    println!("  Best - Min P-value: {:.6}", best.summary.min_p_value);
+                    println!("  Best - Mean P-value: {:.6}", best.summary.mean_p_value);
+                    println!("  Best - Meets criteria: {}", best.summary.meets_criteria);
+                }
                 r
             }
             Err(e) => {
@@ -78,7 +84,7 @@ mod export_integration_tests {
 
         println!("\n=== Step 3: Export to Excel ===");
 
-        let export_config = exporter::ExportConfig {
+        let sheet_config = exporter::SheetConfig {
             selected_indicators: dataset.indicator_names.clone(), // Export ALL indicators
             include_statistics: true,
             include_summary: true,
@@ -87,7 +93,9 @@ mod export_integration_tests {
         let output_path =
             "/tmp/autogroup_export_test.xlsx";
 
-        match exporter::export_grouping_result(&result, &dataset, &export_config, output_path) {
+        // Export best result only
+        let best_result = multi_result.candidates.first().expect("Should have at least one candidate");
+        match exporter::export_grouping_result(best_result, &dataset, &sheet_config, output_path) {
             Ok(_) => {
                 println!("✓ Export successful");
                 println!("  File saved to: {}", output_path);
@@ -151,13 +159,14 @@ mod export_integration_tests {
             selected_indicators: selected_indicators.clone(),
             alpha: 0.05,
             mode: OptimizationMode::Optimized,
+            max_candidates: 10,
         };
 
-        let result =
+        let multi_result =
             grouping::compute_optimal_grouping(dataset.clone(), group_config, stat_config)
                 .unwrap();
 
-        let export_config = exporter::ExportConfig {
+        let sheet_config = exporter::SheetConfig {
             selected_indicators: selected_indicators, // Only export 5 indicators
             include_statistics: true,
             include_summary: true,
@@ -165,7 +174,8 @@ mod export_integration_tests {
 
         let output_path = "/tmp/autogroup_export_selected.xlsx";
 
-        exporter::export_grouping_result(&result, &dataset, &export_config, output_path).unwrap();
+        let best_result = multi_result.candidates.first().expect("Should have at least one candidate");
+        exporter::export_grouping_result(best_result, &dataset, &sheet_config, output_path).unwrap();
 
         assert!(std::path::Path::new(output_path).exists());
 

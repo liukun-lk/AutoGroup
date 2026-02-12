@@ -87,6 +87,13 @@ export interface GroupingResult {
   computation_time_ms: number;
 }
 
+export interface MultiGroupingResult {
+  candidates: GroupingResult[];
+  total_evaluated: number;
+  total_valid: number;
+  computation_time_ms: number;
+}
+
 // UI-specific types
 
 export interface ExportConfig {

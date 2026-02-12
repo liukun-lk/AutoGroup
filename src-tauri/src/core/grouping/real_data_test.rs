@@ -101,11 +101,13 @@ mod real_data_test {
             selected_indicators,
             alpha: 0.05,
             mode: OptimizationMode::Strict,
+            max_candidates: 10,
         };
 
         println!("\n=== Step 5: Statistical Configuration ===");
         println!("  Significance level (α): {}", stat_config.alpha);
         println!("  Optimization mode: Strict (all P > α)");
+        println!("  Max candidates: {}", stat_config.max_candidates);
         println!(
             "  Number of indicators to test: {}",
             stat_config.selected_indicators.len()
@@ -116,11 +118,13 @@ mod real_data_test {
         println!("  This may take a few seconds...");
 
         let start = std::time::Instant::now();
-        let result =
+        let multi_result =
             match grouping::compute_optimal_grouping(dataset.clone(), group_config, stat_config) {
                 Ok(r) => {
                     let elapsed = start.elapsed();
                     println!("✓ Grouping computation completed in {:?}", elapsed);
+                    println!("  Candidates found: {}", r.candidates.len());
+                    println!("  Total evaluated: {}", r.total_evaluated);
                     r
                 }
                 Err(e) => {
@@ -128,8 +132,10 @@ mod real_data_test {
                 }
             };
 
+        let result = multi_result.candidates.first().expect("Should have at least one candidate");
+
         // Display results
-        println!("\n=== RESULTS ===");
+        println!("\n=== RESULTS (Best Candidate) ===");
         println!("\n📊 Summary:");
         println!("  Min P-value:        {:.6}", result.summary.min_p_value);
         println!("  Mean P-value:       {:.6}", result.summary.mean_p_value);
@@ -300,11 +306,13 @@ mod real_data_test {
             selected_indicators,
             alpha: 0.05,
             mode: OptimizationMode::Optimized, // Allow up to 1 invalid indicator
+            max_candidates: 10,
         };
 
         println!("\n=== Step 4: Statistical Configuration ===");
         println!("  Significance level (α): {}", stat_config.alpha);
         println!("  Optimization mode: Optimized (allow ≤1 invalid)");
+        println!("  Max candidates to return: {}", stat_config.max_candidates);
         println!("  Test method: ANOVA + Post-hoc (Tukey HSD or Dunnett's T3)");
 
         // Run the grouping algorithm
@@ -312,11 +320,14 @@ mod real_data_test {
         println!("  This may take several seconds...");
 
         let start = std::time::Instant::now();
-        let result =
+        let multi_result =
             match grouping::compute_optimal_grouping(dataset.clone(), group_config, stat_config) {
                 Ok(r) => {
                     let elapsed = start.elapsed();
                     println!("✓ Grouping computation completed in {:?}", elapsed);
+                    println!("  Candidates found: {}", r.candidates.len());
+                    println!("  Total evaluated: {}", r.total_evaluated);
+                    println!("  Total valid: {}", r.total_valid);
                     r
                 }
                 Err(e) => {
@@ -324,8 +335,11 @@ mod real_data_test {
                 }
             };
 
+        // Get the best result
+        let result = multi_result.candidates.first().expect("Should have at least one candidate");
+
         // Display results
-        println!("\n=== RESULTS ===");
+        println!("\n=== BEST RESULT (Rank #1) ===");
         println!("\n📊 Summary:");
         println!("  Min P-value:        {:.6}", result.summary.min_p_value);
         println!("  Mean P-value:       {:.6}", result.summary.mean_p_value);

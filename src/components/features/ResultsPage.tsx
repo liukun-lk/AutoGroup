@@ -79,6 +79,15 @@ export function ResultsPage() {
 
   const { assignments, statistics, summary, computation_time_ms } = result;
 
+  // Validate that we have the necessary data
+  if (!assignments || !statistics || !summary) {
+    return (
+      <Alert>
+        <AlertDescription>计算结果数据不完整，请重新计算</AlertDescription>
+      </Alert>
+    );
+  }
+
   // Transform flat assignments into grouped structure
   const groupedAssignments = assignments.reduce<Record<number, Array<{ id: string; sex: string }>>>(
     (acc, assignment) => {

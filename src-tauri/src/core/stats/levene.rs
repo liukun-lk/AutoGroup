@@ -1,23 +1,24 @@
 use super::anova::one_way_anova;
 use anyhow::Result;
 
-/// Levene's test for homogeneity of variance
+/// Levene's test for homogeneity of variance (mean-based variant)
 /// Tests the null hypothesis that all groups have equal variances
 /// Returns P-value (high P => variances are equal)
+/// Note: This uses mean-based deviations (original Levene test)
 pub fn levene_test(groups: &[Vec<f64>]) -> Result<f64> {
     if groups.len() < 2 {
         return Err(anyhow::anyhow!("Need at least 2 groups for Levene test"));
     }
 
-    // Step 1: Calculate median for each group
-    let medians: Vec<f64> = groups.iter().map(|group| compute_median(group)).collect();
+    // Step 1: Calculate mean for each group
+    let means: Vec<f64> = groups.iter().map(|group| compute_mean(group)).collect();
 
-    // Step 2: Transform data to absolute deviations from median
+    // Step 2: Transform data to absolute deviations from mean
     let transformed_groups: Vec<Vec<f64>> = groups
         .iter()
-        .zip(&medians)
-        .map(|(group, median)| {
-            group.iter().map(|&x| (x - median).abs()).collect()
+        .zip(&means)
+        .map(|(group, mean)| {
+            group.iter().map(|&x| (x - mean).abs()).collect()
         })
         .collect();
 
@@ -25,21 +26,14 @@ pub fn levene_test(groups: &[Vec<f64>]) -> Result<f64> {
     one_way_anova(&transformed_groups)
 }
 
-/// Calculate median of a dataset
-fn compute_median(data: &[f64]) -> f64 {
+/// Calculate mean of a dataset
+fn compute_mean(data: &[f64]) -> f64 {
     if data.is_empty() {
         return 0.0;
     }
 
-    let mut sorted = data.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-    let mid = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
-        (sorted[mid - 1] + sorted[mid]) / 2.0
-    } else {
-        sorted[mid]
-    }
+    let sum: f64 = data.iter().sum();
+    sum / data.len() as f64
 }
 
 #[cfg(test)]
@@ -73,9 +67,10 @@ mod tests {
     }
 
     #[test]
-    fn test_median_calculation() {
-        assert_eq!(compute_median(&[1.0, 2.0, 3.0]), 2.0);
-        assert_eq!(compute_median(&[1.0, 2.0, 3.0, 4.0]), 2.5);
-        assert_eq!(compute_median(&[5.0]), 5.0);
+    fn test_mean_calculation() {
+        assert_eq!(compute_mean(&[1.0, 2.0, 3.0]), 2.0);
+        assert_eq!(compute_mean(&[1.0, 2.0, 3.0, 4.0]), 2.5);
+        assert_eq!(compute_mean(&[5.0]), 5.0);
+        assert_eq!(compute_mean(&[]), 0.0);
     }
 }

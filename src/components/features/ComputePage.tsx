@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, CheckCircle2, AlertCircle } from "lucide-react";
-import type { GroupingResult } from "@/types";
+import type { MultiGroupingResult } from "@/types";
 
 export function ComputePage() {
   const [dataset] = useAtom(datasetAtom);
@@ -51,8 +51,8 @@ export function ComputePage() {
 
         const startTime = performance.now();
 
-        // Call Rust backend
-        const result = await invoke<GroupingResult>("compute_grouping", {
+        // Call Rust backend - now returns MultiGroupingResult
+        const multiResult = await invoke<MultiGroupingResult>("compute_grouping", {
           dataset,
           groupConfig,
           statConfig,
@@ -64,13 +64,32 @@ export function ComputePage() {
         clearInterval(progressInterval);
         setProgress(100);
         setComputationTime(elapsed);
-        setResult(result);
-        setStatus("success");
 
-        // Auto-navigate to results after a brief delay
-        setTimeout(() => {
-          setCurrentStep("results");
-        }, 1500);
+        // Select the best candidate from multi-result
+        // Backend already sorts by: 1) max min_p_value, 2) max mean_p_value
+        // We re-sort here as a safety measure to ensure consistency
+        if (multiResult.candidates && multiResult.candidates.length > 0) {
+          const sortedCandidates = [...multiResult.candidates].sort((a, b) => {
+            // Primary: compare min_p_value (descending - higher is better)
+            const minPDiff = b.summary.min_p_value - a.summary.min_p_value;
+            if (Math.abs(minPDiff) > 1e-10) {
+              return minPDiff;
+            }
+            // Secondary: compare mean_p_value (descending - higher is better)
+            return b.summary.mean_p_value - a.summary.mean_p_value;
+          });
+
+          const bestResult = sortedCandidates[0];
+          setResult(bestResult);
+          setStatus("success");
+
+          // Auto-navigate to results after a brief delay
+          setTimeout(() => {
+            setCurrentStep("results");
+          }, 1500);
+        } else {
+          throw new Error("No valid grouping solution found");
+        }
       } catch (error) {
         clearInterval(progressInterval);
         setStatus("error");

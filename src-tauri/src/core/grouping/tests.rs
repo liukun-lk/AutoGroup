@@ -85,15 +85,19 @@ mod integration_tests {
             ],
             alpha: 0.05,
             mode: OptimizationMode::Strict,
+            max_candidates: 10,
         };
 
         // Run the complete pipeline
-        let result = grouping::compute_optimal_grouping(dataset, group_config, stat_config);
+        let multi_result = grouping::compute_optimal_grouping(dataset, group_config, stat_config);
 
         // Should find at least one valid grouping
-        assert!(result.is_ok(), "Should find a valid grouping");
+        assert!(multi_result.is_ok(), "Should find a valid grouping");
 
-        let result = result.unwrap();
+        let multi_result = multi_result.unwrap();
+        assert!(!multi_result.candidates.is_empty(), "Should have at least one candidate");
+
+        let result = &multi_result.candidates[0];
 
         // Validate result structure
         assert_eq!(result.assignments.len(), 10, "Should have 10 assignments");
@@ -225,13 +229,17 @@ mod integration_tests {
             selected_indicators: vec!["Var1".to_string(), "Var2".to_string()],
             alpha: 0.05,
             mode: OptimizationMode::Optimized,
+            max_candidates: 10,
         };
 
-        let result = grouping::compute_optimal_grouping(dataset, group_config, stat_config);
+        let multi_result = grouping::compute_optimal_grouping(dataset, group_config, stat_config);
 
-        assert!(result.is_ok(), "Optimized mode should find a grouping");
+        assert!(multi_result.is_ok(), "Optimized mode should find a grouping");
 
-        let result = result.unwrap();
+        let multi_result = multi_result.unwrap();
+        assert!(!multi_result.candidates.is_empty());
+
+        let result = &multi_result.candidates[0];
         println!("Optimized mode result:");
         println!("  Invalid indicators: {}", result.summary.num_invalid_indicators);
         assert!(result.summary.num_invalid_indicators <= 1);

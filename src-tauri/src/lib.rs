@@ -14,6 +14,7 @@ pub fn run() {
             import::parse_excel,
             grouping::compute_grouping,
             export::export_result,
+            export::export_multiple_results,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

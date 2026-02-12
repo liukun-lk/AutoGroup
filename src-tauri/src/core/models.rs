@@ -114,6 +114,12 @@ pub struct StatConfig {
     pub selected_indicators: Vec<String>,
     pub alpha: f64,
     pub mode: OptimizationMode,
+    #[serde(default = "default_max_candidates")]
+    pub max_candidates: usize,
+}
+
+fn default_max_candidates() -> usize {
+    10
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,4 +178,29 @@ pub struct ResultSummary {
 #[derive(Debug, Clone)]
 pub struct CandidateGrouping {
     pub groups: Vec<Vec<usize>>, // group_id -> [animal_indices]
+}
+
+/// Multi-candidate grouping result with Top-N solutions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultiGroupingResult {
+    pub candidates: Vec<GroupingResult>,
+    pub total_evaluated: usize,
+    pub total_valid: usize,
+    pub computation_time_ms: u64,
+}
+
+/// Export configuration for result export
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportConfig {
+    pub mode: ExportMode,
+    pub output_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum ExportMode {
+    /// Export a single selected candidate
+    Single { candidate_index: usize },
+    /// Export all candidates to separate worksheets
+    MultiSheet,
 }

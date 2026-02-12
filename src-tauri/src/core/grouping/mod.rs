@@ -15,11 +15,12 @@ pub fn compute_optimal_grouping(
     dataset: Dataset,
     group_config: GroupConfig,
     stat_config: StatConfig,
-) -> Result<GroupingResult> {
+) -> Result<MultiGroupingResult> {
     let start_time = std::time::Instant::now();
 
     // Generate all candidate groupings (enumeration for ≤50 animals)
     let candidates = enumerator::enumerate_all(&dataset.animals, &group_config)?;
+    let total_evaluated = candidates.len();
 
     // Evaluate candidates in parallel
     let evaluated: Vec<_> = candidates
@@ -29,36 +30,57 @@ pub fn compute_optimal_grouping(
         })
         .collect();
 
-    // Select best grouping based on mode
-    let best = evaluated
+    // Filter valid candidates based on mode
+    let mut valid_candidates: Vec<GroupingResult> = evaluated
         .into_iter()
         .filter(|result| match stat_config.mode {
             OptimizationMode::Strict => result.summary.num_invalid_indicators == 0,
             OptimizationMode::Optimized => result.summary.num_invalid_indicators <= 1,
         })
-        .max_by(|a, b| {
-            // Primary: max(min_p_value)
-            let cmp = a
-                .summary
-                .min_p_value
-                .partial_cmp(&b.summary.min_p_value)
-                .unwrap();
-            if cmp == std::cmp::Ordering::Equal {
-                // Secondary: max(mean_p_value)
-                a.summary
-                    .mean_p_value
-                    .partial_cmp(&b.summary.mean_p_value)
-                    .unwrap()
-            } else {
-                cmp
-            }
+        .collect();
+
+    let total_valid = valid_candidates.len();
+
+    if valid_candidates.is_empty() {
+        return Err(anyhow::anyhow!("No valid grouping found"));
+    }
+
+    // Sort by quality (descending): primary by min_p_value, secondary by mean_p_value
+    valid_candidates.sort_by(|a, b| {
+        let cmp = b
+            .summary
+            .min_p_value
+            .partial_cmp(&a.summary.min_p_value)
+            .unwrap();
+        if cmp == std::cmp::Ordering::Equal {
+            b.summary
+                .mean_p_value
+                .partial_cmp(&a.summary.mean_p_value)
+                .unwrap()
+        } else {
+            cmp
+        }
+    });
+
+    // Take top N candidates
+    let max_candidates = stat_config.max_candidates;
+    let top_candidates: Vec<GroupingResult> = valid_candidates
+        .into_iter()
+        .take(max_candidates)
+        .enumerate()
+        .map(|(_rank, mut result)| {
+            // Set computation_time_ms for each candidate
+            result.computation_time_ms = start_time.elapsed().as_millis() as u64;
+            result
         })
-        .ok_or_else(|| anyhow::anyhow!("No valid grouping found"))?;
+        .collect();
 
     let computation_time_ms = start_time.elapsed().as_millis() as u64;
 
-    Ok(GroupingResult {
+    Ok(MultiGroupingResult {
+        candidates: top_candidates,
+        total_evaluated,
+        total_valid,
         computation_time_ms,
-        ..best
     })
 }

@@ -2,9 +2,9 @@ use crate::core::models::*;
 use anyhow::{Context, Result};
 use rust_xlsxwriter::{Format, Workbook};
 
-/// Configuration for exporting grouping results
+/// Configuration for exporting sheet content
 #[derive(Debug, Clone)]
-pub struct ExportConfig {
+pub struct SheetConfig {
     /// Indicator names to include in export (in order)
     pub selected_indicators: Vec<String>,
     /// Whether to include statistics sheet
@@ -13,7 +13,7 @@ pub struct ExportConfig {
     pub include_summary: bool,
 }
 
-impl Default for ExportConfig {
+impl Default for SheetConfig {
     fn default() -> Self {
         Self {
             selected_indicators: Vec::new(),
@@ -51,7 +51,7 @@ impl ExportRow {
 pub fn export_grouping_result(
     result: &GroupingResult,
     dataset: &Dataset,
-    config: &ExportConfig,
+    config: &SheetConfig,
     output_path: &str,
 ) -> Result<()> {
     let mut workbook = Workbook::new();
@@ -76,17 +76,70 @@ pub fn export_grouping_result(
     Ok(())
 }
 
+/// Export multiple grouping candidates to Excel with each candidate in a separate sheet
+pub fn export_multiple_results(
+    results: &MultiGroupingResult,
+    dataset: &Dataset,
+    config: &SheetConfig,
+    output_path: &str,
+) -> Result<()> {
+    let mut workbook = Workbook::new();
+
+    // For each candidate, create a dedicated worksheet with grouping + statistics
+    for (idx, result) in results.candidates.iter().enumerate() {
+        let rank = idx + 1;
+
+        // Sheet: Candidate N - Grouping
+        let mut grouping_sheet = workbook.add_worksheet();
+        grouping_sheet
+            .set_name(&format!("方案{}-分组", rank))
+            .with_context(|| format!("Failed to set sheet name for candidate {}", rank))?;
+
+        write_grouping_sheet_to(&mut grouping_sheet, result, dataset, config)?;
+
+        // Sheet: Candidate N - Statistics
+        if config.include_statistics {
+            let mut stats_sheet = workbook.add_worksheet();
+            stats_sheet
+                .set_name(&format!("方案{}-统计", rank))
+                .with_context(|| format!("Failed to set stats sheet name for candidate {}", rank))?;
+
+            write_statistics_sheet_to(&mut stats_sheet, result)?;
+        }
+    }
+
+    // Add summary comparison sheet
+    write_comparison_sheet(&mut workbook, results)?;
+
+    workbook
+        .save(output_path)
+        .with_context(|| format!("Failed to save Excel file to {}", output_path))?;
+
+    Ok(())
+}
+
 /// Write Sheet 1: Grouping results with dual-row header matching 动物分组 format
 fn write_grouping_sheet(
     workbook: &mut Workbook,
     result: &GroupingResult,
     dataset: &Dataset,
-    config: &ExportConfig,
+    config: &SheetConfig,
 ) -> Result<()> {
-    let sheet = workbook.add_worksheet();
+    let mut sheet = workbook.add_worksheet();
     sheet
         .set_name("分组结果")
         .context("Failed to set sheet name")?;
+
+    write_grouping_sheet_to(&mut sheet, result, dataset, config)
+}
+
+/// Write grouping data to a specific worksheet
+fn write_grouping_sheet_to(
+    sheet: &mut rust_xlsxwriter::Worksheet,
+    result: &GroupingResult,
+    dataset: &Dataset,
+    config: &SheetConfig,
+) -> Result<()> {
 
     // Prepare export rows
     let mut export_rows = Vec::new();
@@ -163,10 +216,19 @@ fn write_grouping_sheet(
 
 /// Write Sheet 2: Statistical test results
 fn write_statistics_sheet(workbook: &mut Workbook, result: &GroupingResult) -> Result<()> {
-    let sheet = workbook.add_worksheet();
+    let mut sheet = workbook.add_worksheet();
     sheet
         .set_name("统计结果")
         .context("Failed to set sheet name")?;
+
+    write_statistics_sheet_to(&mut sheet, result)
+}
+
+/// Write statistics data to a specific worksheet
+fn write_statistics_sheet_to(
+    sheet: &mut rust_xlsxwriter::Worksheet,
+    result: &GroupingResult,
+) -> Result<()> {
 
     // Header row
     let header_format = Format::new().set_bold();
@@ -202,7 +264,7 @@ fn write_summary_sheet(
     workbook: &mut Workbook,
     result: &GroupingResult,
     dataset: &Dataset,
-    config: &ExportConfig,
+    config: &SheetConfig,
 ) -> Result<()> {
     let sheet = workbook.add_worksheet();
     sheet
@@ -311,6 +373,75 @@ fn write_summary_sheet(
     Ok(())
 }
 
+/// Write comparison sheet for multiple candidates
+fn write_comparison_sheet(
+    workbook: &mut Workbook,
+    results: &MultiGroupingResult,
+) -> Result<()> {
+    let sheet = workbook.add_worksheet();
+    sheet
+        .set_name("方案对比")
+        .context("Failed to set comparison sheet name")?;
+
+    let header_format = Format::new().set_bold();
+    let label_format = Format::new().set_bold();
+
+    // Header row
+    sheet.write_string_with_format(0, 0, "排名", &header_format)?;
+    sheet.write_string_with_format(0, 1, "最小 P 值", &header_format)?;
+    sheet.write_string_with_format(0, 2, "平均 P 值", &header_format)?;
+    sheet.write_string_with_format(0, 3, "不达标指标数", &header_format)?;
+    sheet.write_string_with_format(0, 4, "达标指标数", &header_format)?;
+    sheet.write_string_with_format(0, 5, "总指标数", &header_format)?;
+    sheet.write_string_with_format(0, 6, "是否满足要求", &header_format)?;
+
+    // Data rows
+    for (idx, result) in results.candidates.iter().enumerate() {
+        let excel_row = (idx + 1) as u32;
+        let rank = idx + 1;
+
+        sheet.write_number(excel_row, 0, rank as f64)?;
+        sheet.write_number(excel_row, 1, result.summary.min_p_value)?;
+        sheet.write_number(excel_row, 2, result.summary.mean_p_value)?;
+        sheet.write_number(excel_row, 3, result.summary.num_invalid_indicators as f64)?;
+        sheet.write_number(excel_row, 4, result.summary.passed_indicators as f64)?;
+        sheet.write_number(excel_row, 5, result.summary.total_indicators as f64)?;
+        sheet.write_string(
+            excel_row,
+            6,
+            if result.summary.meets_criteria { "是" } else { "否" },
+        )?;
+    }
+
+    let mut row = (results.candidates.len() + 2) as u32;
+
+    // Summary statistics
+    sheet.write_string_with_format(row, 0, "评估统计", &label_format)?;
+    row += 1;
+
+    sheet.write_string(row, 0, "总评估候选数")?;
+    sheet.write_number(row, 1, results.total_evaluated as f64)?;
+    row += 1;
+
+    sheet.write_string(row, 0, "合格候选数")?;
+    sheet.write_number(row, 1, results.total_valid as f64)?;
+    row += 1;
+
+    sheet.write_string(row, 0, "计算耗时 (ms)")?;
+    sheet.write_number(row, 1, results.computation_time_ms as f64)?;
+
+    // Auto-fit columns
+    sheet.set_column_width(0, 8)?;
+    sheet.set_column_width(1, 12)?;
+    sheet.set_column_width(2, 12)?;
+    sheet.set_column_width(3, 14)?;
+    sheet.set_column_width(4, 14)?;
+    sheet.set_column_width(5, 12)?;
+    sheet.set_column_width(6, 14)?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_export_config_default() {
-        let config = ExportConfig::default();
+        let config = SheetConfig::default();
         assert!(config.include_statistics);
         assert!(config.include_summary);
         assert_eq!(config.selected_indicators.len(), 0);
@@ -440,7 +571,7 @@ mod tests {
             computation_time_ms: 10,
         };
 
-        let config = ExportConfig {
+        let config = SheetConfig {
             selected_indicators: vec!["Weight".to_string()],
             include_statistics: true,
             include_summary: true,
