@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "autogroup",
-        "width": 1600,
-        "height": 1000
+        "width": 1400,
+        "height": 900
       }
     ],
     "security": {
