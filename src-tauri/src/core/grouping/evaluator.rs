@@ -37,23 +37,47 @@ pub fn evaluate_grouping(
         }
 
         // Compute P-value using appropriate statistical test
-        let (p_value, test_method) = stats::compute_p_value(&groups, stat_config.alpha)?;
+        let (levene_p_value, diff_p_value, test_method, posthoc_results) = stats::compute_p_value(&groups, stat_config.alpha)?;
 
-        let is_valid = p_value > stat_config.alpha;
+        // For multi-group (≥3), check post-hoc results
+        let mut is_valid = diff_p_value > stat_config.alpha;
+        let mut posthoc_comparisons = None;
+
+        if let Some(posthoc) = posthoc_results {
+            // Convert to PostHocComparison and check if all pairwise comparisons pass
+            let comparisons: Vec<PostHocComparison> = posthoc
+                .iter()
+                .map(|(g1, g2, p)| PostHocComparison {
+                    group1_id: *g1,
+                    group2_id: *g2,
+                    p_value: *p,
+                    is_valid: *p > stat_config.alpha,
+                })
+                .collect();
+
+            // Strict criterion: ALL pairwise comparisons must have P > α
+            let all_posthoc_valid = comparisons.iter().all(|c| c.is_valid);
+            is_valid = is_valid && all_posthoc_valid;
+
+            posthoc_comparisons = Some(comparisons);
+        }
+
         if !is_valid {
             num_invalid += 1;
         }
 
-        if p_value < min_p {
-            min_p = p_value;
+        if diff_p_value < min_p {
+            min_p = diff_p_value;
         }
-        sum_p += p_value;
+        sum_p += diff_p_value;
 
         statistics.push(IndicatorStats {
             indicator_name: indicator_name.clone(),
-            p_value,
+            levene_p_value,
+            diff_p_value,
             test_method,
             is_valid,
+            posthoc_results: posthoc_comparisons,
         });
     }
 
@@ -81,6 +105,9 @@ pub fn evaluate_grouping(
         }
     }
 
+    let total_indicators = statistics.len();
+    let passed_indicators = total_indicators - num_invalid;
+
     Ok(GroupingResult {
         assignments,
         statistics,
@@ -89,6 +116,10 @@ pub fn evaluate_grouping(
             mean_p_value: mean_p,
             num_invalid_indicators: num_invalid,
             meets_criteria,
+            total_animals: dataset.animals.len(),
+            num_groups: candidate.groups.len(),
+            passed_indicators,
+            total_indicators,
         },
         computation_time_ms: 0, // Will be set by caller
     })

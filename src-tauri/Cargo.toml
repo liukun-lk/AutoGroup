@@ -39,6 +39,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Parallel computing
 rayon = "1.10"
+rand = "0.8"
 
 # Error handling
 anyhow = "1.0"

@@ -141,8 +141,18 @@ pub struct GroupAssignment {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndicatorStats {
     pub indicator_name: String,
-    pub p_value: f64,
+    pub levene_p_value: f64,
+    pub diff_p_value: f64,
     pub test_method: String,
+    pub is_valid: bool,
+    pub posthoc_results: Option<Vec<PostHocComparison>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostHocComparison {
+    pub group1_id: usize,
+    pub group2_id: usize,
+    pub p_value: f64,
     pub is_valid: bool,
 }
 
@@ -152,6 +162,10 @@ pub struct ResultSummary {
     pub mean_p_value: f64,
     pub num_invalid_indicators: usize,
     pub meets_criteria: bool,
+    pub total_animals: usize,
+    pub num_groups: usize,
+    pub passed_indicators: usize,
+    pub total_indicators: usize,
 }
 
 /// Internal: Candidate grouping (indices only)

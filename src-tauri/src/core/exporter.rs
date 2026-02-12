@@ -171,25 +171,28 @@ fn write_statistics_sheet(workbook: &mut Workbook, result: &GroupingResult) -> R
     // Header row
     let header_format = Format::new().set_bold();
     sheet.write_string_with_format(0, 0, "指标名称", &header_format)?;
-    sheet.write_string_with_format(0, 1, "P 值", &header_format)?;
-    sheet.write_string_with_format(0, 2, "检验方法", &header_format)?;
-    sheet.write_string_with_format(0, 3, "是否达标", &header_format)?;
+    sheet.write_string_with_format(0, 1, "Levene P 值", &header_format)?;
+    sheet.write_string_with_format(0, 2, "差异检验 P 值", &header_format)?;
+    sheet.write_string_with_format(0, 3, "检验方法", &header_format)?;
+    sheet.write_string_with_format(0, 4, "是否达标", &header_format)?;
 
     // Data rows
     for (row_idx, stat) in result.statistics.iter().enumerate() {
         let excel_row = (row_idx + 1) as u32;
 
         sheet.write_string(excel_row, 0, &stat.indicator_name)?;
-        sheet.write_number(excel_row, 1, stat.p_value)?;
-        sheet.write_string(excel_row, 2, &stat.test_method)?;
-        sheet.write_string(excel_row, 3, if stat.is_valid { "✓" } else { "✗" })?;
+        sheet.write_number(excel_row, 1, stat.levene_p_value)?;
+        sheet.write_number(excel_row, 2, stat.diff_p_value)?;
+        sheet.write_string(excel_row, 3, &stat.test_method)?;
+        sheet.write_string(excel_row, 4, if stat.is_valid { "✓" } else { "✗" })?;
     }
 
     // Auto-fit columns
     sheet.set_column_width(0, 15)?;
     sheet.set_column_width(1, 12)?;
-    sheet.set_column_width(2, 20)?;
-    sheet.set_column_width(3, 10)?;
+    sheet.set_column_width(2, 14)?;
+    sheet.set_column_width(3, 20)?;
+    sheet.set_column_width(4, 10)?;
 
     Ok(())
 }
@@ -418,15 +421,21 @@ mod tests {
             ],
             statistics: vec![IndicatorStats {
                 indicator_name: "Weight".to_string(),
-                p_value: 0.85,
+                levene_p_value: 0.92,
+                diff_p_value: 0.85,
                 is_valid: true,
                 test_method: "Student t-test".to_string(),
+                posthoc_results: None,
             }],
             summary: ResultSummary {
                 min_p_value: 0.85,
                 mean_p_value: 0.85,
                 num_invalid_indicators: 0,
                 meets_criteria: true,
+                total_animals: 4,
+                num_groups: 2,
+                passed_indicators: 1,
+                total_indicators: 1,
             },
             computation_time_ms: 10,
         };

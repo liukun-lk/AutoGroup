@@ -1,5 +1,5 @@
 // Integration tests for the complete grouping pipeline
-use crate::core::{grouping, models::*, parser};
+use crate::core::{grouping, models::*};
 use std::collections::HashMap;
 
 #[cfg(test)]
@@ -141,8 +141,8 @@ mod integration_tests {
         println!("\n=== Indicator Statistics ===");
         for stat in &result.statistics {
             println!(
-                "{}: P={:.6} ({})",
-                stat.indicator_name, stat.p_value, stat.test_method
+                "{}: Levene P={:.6}, Diff P={:.6} ({})",
+                stat.indicator_name, stat.levene_p_value, stat.diff_p_value, stat.test_method
             );
         }
 

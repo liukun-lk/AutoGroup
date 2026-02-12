@@ -250,6 +250,7 @@ dependencies = [
  "anyhow",
  "calamine",
  "chrono",
+ "rand 0.8.5",
  "rayon",
  "rusqlite",
  "rust_xlsxwriter",

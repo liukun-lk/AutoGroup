@@ -149,15 +149,16 @@ mod real_data_test {
 
         println!("\n📈 Indicator Statistics:");
         println!(
-            "  {:<15} {:<12} {:<8} {:<30}",
-            "Indicator", "P-value", "Valid", "Method"
+            "  {:<15} {:<12} {:<12} {:<8} {:<30}",
+            "Indicator", "Levene P", "Diff P", "Valid", "Method"
         );
-        println!("  {}", "-".repeat(70));
+        println!("  {}", "-".repeat(85));
         for stat in &result.statistics {
             println!(
-                "  {:<15} {:<12.6} {:<8} {}",
+                "  {:<15} {:<12.6} {:<12.6} {:<8} {}",
                 stat.indicator_name,
-                stat.p_value,
+                stat.levene_p_value,
+                stat.diff_p_value,
                 if stat.is_valid { "✓" } else { "✗" },
                 stat.test_method
             );
@@ -230,5 +231,228 @@ mod real_data_test {
 
         println!("\n✅ All validations passed!");
         println!("\n=== Test Complete ===\n");
+    }
+
+    #[test]
+    #[ignore] // Run with: cargo test --lib test_three_groups_real_data -- --ignored --nocapture
+    fn test_three_groups_real_data() {
+        // Path to the real test data
+        let excel_path = "/Users/lb/Documents/source_code/github/AutoGroup/docs/通用动物实验自动分组软件_测试用数据.xlsx";
+
+        println!("\n=== THREE-GROUP GROUPING TEST ===");
+        println!("\n=== Step 1: Parse Excel File ===");
+        let dataset = match parser::parse_excel_file(excel_path) {
+            Ok(d) => {
+                println!("✓ Successfully parsed Excel file");
+                println!("  Animals: {}", d.animals.len());
+                println!("  Males: {}", d.metadata.male_count);
+                println!("  Females: {}", d.metadata.female_count);
+                d
+            }
+            Err(e) => {
+                panic!("Failed to parse Excel: {}", e);
+            }
+        };
+
+        // Select indicators
+        let selected_indicators = vec!["kg", "℃", "ALT", "AST", "TP", "ALB", "GLU"]
+            .into_iter()
+            .filter(|name| dataset.indicator_names.contains(&name.to_string()))
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
+
+        println!(
+            "\n=== Step 2: Selected {} Indicators ===",
+            selected_indicators.len()
+        );
+
+        // Configure 3 groups: each with 2M+1F=3 animals
+        // Total: 6M + 3F = 9 animals
+        let group_config = GroupConfig {
+            num_groups: 3,
+            animals_per_group: GroupSize::Uniform { value: 3 },
+            sex_constraints: vec![
+                SexConstraint {
+                    group_index: 0,
+                    male_count: 2,
+                    female_count: 1,
+                },
+                SexConstraint {
+                    group_index: 1,
+                    male_count: 2,
+                    female_count: 1,
+                },
+                SexConstraint {
+                    group_index: 2,
+                    male_count: 2,
+                    female_count: 1,
+                },
+            ],
+        };
+
+        println!("\n=== Step 3: Grouping Configuration ===");
+        println!("  Number of groups: {}", group_config.num_groups);
+        println!("  Each group: 3 animals (2M + 1F)");
+        println!("  Total animals used: 9 (6M + 3F)");
+
+        // Statistical configuration - Use Optimized mode for 3-group case
+        let stat_config = StatConfig {
+            selected_indicators,
+            alpha: 0.05,
+            mode: OptimizationMode::Optimized, // Allow up to 1 invalid indicator
+        };
+
+        println!("\n=== Step 4: Statistical Configuration ===");
+        println!("  Significance level (α): {}", stat_config.alpha);
+        println!("  Optimization mode: Optimized (allow ≤1 invalid)");
+        println!("  Test method: ANOVA + Post-hoc (Tukey HSD or Dunnett's T3)");
+
+        // Run the grouping algorithm
+        println!("\n=== Step 5: Computing Optimal 3-Group Grouping ===");
+        println!("  This may take several seconds...");
+
+        let start = std::time::Instant::now();
+        let result =
+            match grouping::compute_optimal_grouping(dataset.clone(), group_config, stat_config) {
+                Ok(r) => {
+                    let elapsed = start.elapsed();
+                    println!("✓ Grouping computation completed in {:?}", elapsed);
+                    r
+                }
+                Err(e) => {
+                    panic!("Grouping computation failed: {}", e);
+                }
+            };
+
+        // Display results
+        println!("\n=== RESULTS ===");
+        println!("\n📊 Summary:");
+        println!("  Min P-value:        {:.6}", result.summary.min_p_value);
+        println!("  Mean P-value:       {:.6}", result.summary.mean_p_value);
+        println!(
+            "  Invalid indicators: {}",
+            result.summary.num_invalid_indicators
+        );
+        println!(
+            "  Meets criteria:     {}",
+            if result.summary.meets_criteria {
+                "✓ YES"
+            } else {
+                "✗ NO"
+            }
+        );
+        println!("  Computation time:   {}ms", result.computation_time_ms);
+
+        println!("\n📈 Indicator Statistics (with Post-hoc Results):");
+        println!(
+            "  {:<15} {:<12} {:<12} {:<8} {:<40}",
+            "Indicator", "Levene P", "Diff P", "Valid", "Method"
+        );
+        println!("  {}", "-".repeat(95));
+        for stat in &result.statistics {
+            println!(
+                "  {:<15} {:<12.6} {:<12.6} {:<8} {}",
+                stat.indicator_name,
+                stat.levene_p_value,
+                stat.diff_p_value,
+                if stat.is_valid { "✓" } else { "✗" },
+                stat.test_method
+            );
+
+            // Show post-hoc pairwise comparisons if available
+            if let Some(ref posthoc) = stat.posthoc_results {
+                println!("    Pairwise comparisons:");
+                for comparison in posthoc {
+                    println!(
+                        "      Group {} vs {}: P = {:.6} {}",
+                        comparison.group1_id,
+                        comparison.group2_id,
+                        comparison.p_value,
+                        if comparison.is_valid { "✓" } else { "✗" }
+                    );
+                }
+            }
+        }
+
+        println!("\n👥 Group Assignments:");
+        for group_id in 0..3 {
+            let group_members: Vec<_> = result
+                .assignments
+                .iter()
+                .filter(|a| a.group_id == group_id)
+                .collect();
+
+            println!("\n  Group {}:", group_id);
+            let males = group_members.iter().filter(|a| a.sex == Sex::Male).count();
+            let females = group_members
+                .iter()
+                .filter(|a| a.sex == Sex::Female)
+                .count();
+            println!(
+                "    Size: {} animals ({}M + {}F)",
+                group_members.len(),
+                males,
+                females
+            );
+
+            for assignment in group_members {
+                let animal = dataset
+                    .animals
+                    .iter()
+                    .find(|a| a.id == assignment.animal_id)
+                    .unwrap();
+
+                print!(
+                    "    - {} ({}) ",
+                    assignment.animal_id,
+                    assignment.sex.to_char()
+                );
+
+                // Show first 3 indicator values
+                for indicator_name in result.statistics.iter().take(3).map(|s| &s.indicator_name) {
+                    if let Some(&value) = animal.indicators.get(indicator_name) {
+                        print!(" {}={:.1}", indicator_name, value);
+                    }
+                }
+                println!();
+            }
+        }
+
+        // Assertions
+        assert_eq!(result.assignments.len(), 9, "Should have 9 assignments");
+        assert!(
+            result.summary.min_p_value > 0.0,
+            "Min P-value should be positive"
+        );
+
+        // Verify that all groups have correct size
+        for group_id in 0..3 {
+            let group_size = result
+                .assignments
+                .iter()
+                .filter(|a| a.group_id == group_id)
+                .count();
+            assert_eq!(group_size, 3, "Each group should have 3 animals");
+        }
+
+        // Verify post-hoc results exist for multi-group indicators
+        for stat in &result.statistics {
+            if stat.test_method.contains("ANOVA") {
+                assert!(
+                    stat.posthoc_results.is_some(),
+                    "ANOVA indicators should have post-hoc results"
+                );
+
+                let posthoc = stat.posthoc_results.as_ref().unwrap();
+                assert_eq!(
+                    posthoc.len(),
+                    3,
+                    "Should have 3 pairwise comparisons for 3 groups: C(3,2)=3"
+                );
+            }
+        }
+
+        println!("\n✅ All 3-group validations passed!");
+        println!("\n=== Three-Group Test Complete ===\n");
     }
 }
