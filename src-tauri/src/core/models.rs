@@ -24,6 +24,8 @@ impl Sex {
         }
     }
 
+    // Currently unused - kept for potential future use
+    #[allow(dead_code)]
     pub fn to_char(&self) -> char {
         match self {
             Sex::Male => 'M',
@@ -39,12 +41,41 @@ impl Sex {
     }
 }
 
+/// Metadata for a single indicator
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndicatorMetadata {
+    /// Primary key for lookups (usually English name from Row 1, or Chinese name if Row 1 is empty)
+    pub key: String,
+    /// Display name (Chinese name from Row 2, or English name from Row 1)
+    pub display_name: String,
+    /// Unit string (extracted from Row 1 if present, otherwise from Row 2)
+    pub unit: String,
+}
+
+impl IndicatorMetadata {
+    pub fn new(key: String, display_name: String, unit: String) -> Self {
+        Self {
+            key,
+            display_name,
+            unit,
+        }
+    }
+}
+
 /// Dataset imported from Excel
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Dataset {
     pub animals: Vec<Animal>,
     pub indicator_names: Vec<String>,
+    pub indicator_metadata: Vec<IndicatorMetadata>,
     pub metadata: DatasetMetadata,
+}
+
+impl Dataset {
+    /// Get metadata for a given indicator key
+    pub fn get_indicator_metadata(&self, key: &str) -> Option<&IndicatorMetadata> {
+        self.indicator_metadata.iter().find(|m| m.key == key)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

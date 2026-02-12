@@ -76,7 +76,7 @@ pub fn export_grouping_result(
     Ok(())
 }
 
-/// Write Sheet 1: Grouping results with format matching output spec
+/// Write Sheet 1: Grouping results with dual-row header matching 动物分组 format
 fn write_grouping_sheet(
     workbook: &mut Workbook,
     result: &GroupingResult,
@@ -114,20 +114,35 @@ fn write_grouping_sheet(
     // Sort rows: group > sex (female first) > animal_id
     export_rows.sort_by_key(|row| row.sort_key());
 
-    // Write header row
     let header_format = Format::new().set_bold();
 
-    sheet.write_string_with_format(0, 0, "组别", &header_format)?;
-    sheet.write_string_with_format(0, 1, "动物编号", &header_format)?;
-    sheet.write_string_with_format(0, 2, "性别", &header_format)?;
-
-    for (col_idx, indicator_name) in config.selected_indicators.iter().enumerate() {
-        sheet.write_string_with_format(0, (col_idx + 3) as u16, indicator_name, &header_format)?;
+    // Row 0: Unit row (empty for first 3 columns, units from column 4+)
+    // Columns 1-3 are empty in Row 0
+    for (col_idx, indicator_key) in config.selected_indicators.iter().enumerate() {
+        if let Some(metadata) = dataset.get_indicator_metadata(indicator_key) {
+            if !metadata.unit.is_empty() {
+                sheet.write_string(0, (col_idx + 3) as u16, &metadata.unit)?;
+            }
+        }
     }
 
-    // Write data rows
+    // Row 1: Column name row
+    sheet.write_string_with_format(1, 0, "组别", &header_format)?;
+    sheet.write_string_with_format(1, 1, "动物编号", &header_format)?;
+    sheet.write_string_with_format(1, 2, "性别", &header_format)?;
+
+    for (col_idx, indicator_key) in config.selected_indicators.iter().enumerate() {
+        let display_name = if let Some(metadata) = dataset.get_indicator_metadata(indicator_key) {
+            &metadata.display_name
+        } else {
+            indicator_key
+        };
+        sheet.write_string_with_format(1, (col_idx + 3) as u16, display_name, &header_format)?;
+    }
+
+    // Row 2+: Data rows
     for (row_idx, row) in export_rows.iter().enumerate() {
-        let excel_row = (row_idx + 1) as u32;
+        let excel_row = (row_idx + 2) as u32; // Data starts from Row 2
 
         sheet.write_number(excel_row, 0, row.group_id as f64)?;
         sheet.write_string(excel_row, 1, &row.animal_id)?;
@@ -364,6 +379,11 @@ mod tests {
 
         let dataset = Dataset {
             indicator_names: vec!["Weight".to_string()],
+            indicator_metadata: vec![IndicatorMetadata::new(
+                "Weight".to_string(),
+                "Weight".to_string(),
+                "kg".to_string(),
+            )],
             metadata: DatasetMetadata {
                 total_animals: 4,
                 male_count: 2,

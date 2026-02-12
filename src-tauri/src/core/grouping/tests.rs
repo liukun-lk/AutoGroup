@@ -45,6 +45,11 @@ mod integration_tests {
                 "Temperature".to_string(),
                 "Glucose".to_string(),
             ],
+            indicator_metadata: vec![
+                IndicatorMetadata::new("Weight".to_string(), "Weight".to_string(), "kg".to_string()),
+                IndicatorMetadata::new("Temperature".to_string(), "Temperature".to_string(), "℃".to_string()),
+                IndicatorMetadata::new("Glucose".to_string(), "Glucose".to_string(), "mmol/L".to_string()),
+            ],
             metadata: DatasetMetadata {
                 total_animals: 10,
                 male_count: 6,
@@ -185,6 +190,10 @@ mod integration_tests {
 
         let dataset = Dataset {
             indicator_names: vec!["Var1".to_string(), "Var2".to_string()],
+            indicator_metadata: vec![
+                IndicatorMetadata::new("Var1".to_string(), "Var1".to_string(), String::new()),
+                IndicatorMetadata::new("Var2".to_string(), "Var2".to_string(), String::new()),
+            ],
             metadata: DatasetMetadata {
                 total_animals: 10,
                 male_count: 6,

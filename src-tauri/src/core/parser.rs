@@ -30,38 +30,46 @@ pub fn parse_excel_file(path: &str) -> Result<Dataset> {
         ));
     }
 
-    // Row 0: Indicator names (English, skip first 2 columns)
-    let indicator_row = &rows[0];
-    let mut indicator_names: Vec<String> = Vec::new();
+    // Parse dual-row header
+    // Row 0: English names (or units/empty)
+    // Row 1: Chinese names + units
+    let row0 = &rows[0];
+    let row1 = &rows[1];
 
-    for (col_idx, cell) in indicator_row.iter().enumerate().skip(2) {
-        let cell_str = cell.get_string().unwrap_or("");
-        if !cell_str.trim().is_empty() {
-            indicator_names.push(cell_str.trim().to_string());
-        } else {
-            // Try to get Chinese name from row 1
-            if let Some(row1_cell) = rows.get(1).and_then(|r| r.get(col_idx)) {
-                if let Some(s) = row1_cell.get_string() {
-                    if !s.trim().is_empty() {
-                        indicator_names.push(s.trim().to_string());
-                        continue;
-                    }
-                }
-            }
-            // Generate placeholder name
-            indicator_names.push(format!("Indicator_{}", col_idx - 1));
+    let mut indicator_names: Vec<String> = Vec::new();
+    let mut indicator_metadata: Vec<IndicatorMetadata> = Vec::new();
+
+    // Start from column 2 (skip AnimalID and Sex columns)
+    let max_cols = row0.len().max(row1.len());
+
+    for col_idx in 2..max_cols {
+        let row0_val = row0.get(col_idx).and_then(|c| c.get_string()).unwrap_or("");
+        let row1_val = row1.get(col_idx).and_then(|c| c.get_string()).unwrap_or("");
+
+        let row0_trimmed = row0_val.trim();
+        let row1_trimmed = row1_val.trim();
+
+        // Skip if both rows are empty
+        if row0_trimmed.is_empty() && row1_trimmed.is_empty() {
+            continue;
         }
+
+        // Determine key, display_name, and unit
+        let (key, display_name, unit) = parse_indicator_metadata(row0_trimmed, row1_trimmed);
+
+        indicator_names.push(key.clone());
+        indicator_metadata.push(IndicatorMetadata::new(key, display_name, unit));
     }
 
     // Determine data start row
     let start_row = if rows.len() > 2 {
-        // Check if row 2 is data or unit row
+        // Check if row 2 is data or additional header
         let first_cell = &rows[2][0];
         if let Some(s) = first_cell.get_string() {
             if s.starts_with("XHP") || s.len() > 5 {
                 2 // Row 2 is data
             } else {
-                3 // Row 2 is units, skip it
+                3 // Row 2 is additional header, skip it
             }
         } else {
             3
@@ -136,7 +144,149 @@ pub fn parse_excel_file(path: &str) -> Result<Dataset> {
 
     Ok(Dataset {
         indicator_names,
+        indicator_metadata,
         metadata,
         animals,
     })
+}
+
+/// Parse indicator metadata from dual-row header
+/// Returns: (key, display_name, unit)
+///
+/// The original data has a complex structure:
+/// - Row 1 (Row 0 in code): Mix of English names/units (kg, ℃, ALT, AST, TP...)
+/// - Row 2 (Row 1 in code): Mix of Chinese names/units (体重, 肛温, U/L, g/L...)
+///
+/// Pattern recognition:
+/// - If Row 1 is a short name (kg, ℃) and Row 2 is Chinese -> Row 2 is display name
+/// - If Row 1 is uppercase English (ALT, AST) and Row 2 is unit (U/L) -> Row 1 is display name, Row 2 is unit
+fn parse_indicator_metadata(row0: &str, row1: &str) -> (String, String, String) {
+    // Both empty shouldn't happen due to caller's check
+    if row0.is_empty() && row1.is_empty() {
+        return ("Unknown".to_string(), "Unknown".to_string(), String::new());
+    }
+
+    // Case 1: Row 0 is clearly a unit (kg, ℃), Row 1 should be Chinese name
+    if is_simple_unit(row0) {
+        let unit = row0.to_string();
+        if !row1.is_empty() && is_chinese_name(row1) {
+            // e.g., Row0="kg", Row1="体重" -> key="kg", display="体重", unit="kg"
+            return (row0.to_string(), row1.to_string(), unit);
+        } else {
+            // e.g., Row0="kg", Row1=empty -> key="kg", display="kg", unit="kg"
+            return (row0.to_string(), row0.to_string(), unit);
+        }
+    }
+
+    // Case 2: Row 0 is English indicator name (ALT, AST, WBC...)
+    if is_english_indicator_name(row0) {
+        let key = row0.to_string();
+        // Row 1 is likely a unit
+        let unit = if is_unit_string(row1) {
+            row1.to_string()
+        } else {
+            String::new()
+        };
+        // Use English name as display (no Chinese available)
+        return (key.clone(), key, unit);
+    }
+
+    // Case 3: Row 0 is empty/unit, Row 1 has content
+    if row0.is_empty() || is_unit_string(row0) {
+        let unit = if is_unit_string(row0) {
+            row0.to_string()
+        } else if is_unit_string(row1) {
+            row1.to_string()
+        } else {
+            String::new()
+        };
+
+        // Use Row 1 as both key and display
+        return (row1.to_string(), row1.to_string(), unit);
+    }
+
+    // Fallback: Use Row 0 as key and display
+    let unit = if is_unit_string(row1) {
+        row1.to_string()
+    } else {
+        String::new()
+    };
+    (row0.to_string(), row0.to_string(), unit)
+}
+
+/// Check if string is a simple unit (kg, ℃, etc.)
+fn is_simple_unit(s: &str) -> bool {
+    matches!(s, "kg" | "℃" | "°C")
+}
+
+/// Check if string is a Chinese name (contains Chinese characters)
+fn is_chinese_name(s: &str) -> bool {
+    s.chars().any(|c| {
+        let code = c as u32;
+        code >= 0x4E00 && code <= 0x9FFF
+    })
+}
+
+/// Check if string is an English indicator name (uppercase letters, possibly with numbers)
+fn is_english_indicator_name(s: &str) -> bool {
+    !s.is_empty() &&
+    s.len() >= 2 &&
+    s.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '-' || c == '#' || c == '%')
+}
+
+/// Check if string is a unit (contains /, parentheses, or common unit patterns)
+fn is_unit_string(s: &str) -> bool {
+    !s.is_empty() && (
+        s.contains('/') ||
+        s.contains('(') ||
+        s.contains("mol") ||
+        s.contains("^") ||
+        s == "kg" ||
+        s == "℃"
+    )
+}
+
+// The following functions are currently unused but kept for potential future use
+
+/// Check if a string looks like a unit (contains special chars or is very short)
+#[allow(dead_code)]
+fn is_unit_like(s: &str) -> bool {
+    // Units typically contain: parentheses, /, ^, or are very short (kg, ℃)
+    s.len() <= 3 || s.contains('(') || s.contains('/') || s.contains('^') || s.contains('℃')
+}
+
+/// Check if a string is a Chinese name or indicator abbreviation
+#[allow(dead_code)]
+fn is_chinese_or_indicator_name(s: &str) -> bool {
+    // Contains Chinese characters or looks like indicator name (WBC, RBC, etc.)
+    let has_chinese = s.chars().any(|c| {
+        let code = c as u32;
+        code > 0x4E00 && code < 0x9FFF
+    });
+
+    let is_indicator = s.len() > 2 && s.chars().all(|c| c.is_ascii_uppercase() || c == '#' || c == '%' || c == '-');
+
+    has_chinese || is_indicator
+}
+
+/// Extract unit from text (handles patterns like "U/L", "g/L", "体重")
+#[allow(dead_code)]
+fn extract_unit_from_text(text: &str) -> String {
+    // If text contains common unit patterns, extract them
+    if text.contains("U/L") {
+        "U/L".to_string()
+    } else if text.contains("g/L") {
+        "g/L".to_string()
+    } else if text.contains("mmol/L") {
+        "mmol/L".to_string()
+    } else if text.contains("umol/L") {
+        "umol/L".to_string()
+    } else if text.contains("10^9/L") {
+        "(10^9/L)".to_string()
+    } else if text.contains("10^12/L") {
+        "(10^12/L)".to_string()
+    } else {
+        // No recognizable unit
+        String::new()
+    }
 }
