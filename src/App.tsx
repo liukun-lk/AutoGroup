@@ -1,6 +1,6 @@
 import { Provider } from "jotai";
 import { useAtom } from "jotai";
-import { currentStepAtom, errorAtom, resetStateAtom } from "./stores";
+import { currentStepAtom, errorAtom } from "./stores";
 import { UploadPage } from "@/components/features/UploadPage";
 import { ConfigurePage } from "@/components/features/ConfigurePage";
 import { ComputePage } from "@/components/features/ComputePage";
