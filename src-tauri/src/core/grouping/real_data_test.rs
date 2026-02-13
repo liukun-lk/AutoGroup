@@ -81,11 +81,15 @@ mod real_data_test {
                     group_index: 0,
                     male_count: 3,
                     female_count: 2,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
                 SexConstraint {
                     group_index: 1,
                     male_count: 3,
                     female_count: 1,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
             ],
         };
@@ -285,16 +289,22 @@ mod real_data_test {
                     group_index: 0,
                     male_count: 2,
                     female_count: 1,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
                 SexConstraint {
                     group_index: 1,
                     male_count: 2,
                     female_count: 1,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
                 SexConstraint {
                     group_index: 2,
                     male_count: 2,
                     female_count: 1,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
             ],
         };

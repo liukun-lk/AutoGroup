@@ -5,6 +5,8 @@
 
 export type Sex = "Male" | "Female";
 
+export type GroupType = "Experimental" | "Reserve";
+
 export interface Animal {
   id: string;
   sex: Sex;
@@ -35,6 +37,8 @@ export interface SexConstraint {
   group_index: number;
   male_count: number;
   female_count: number;
+  group_type?: GroupType; // defaults to "Experimental"
+  custom_name?: string; // e.g., "备用动物" for reserve group
 }
 
 export type GroupSize =

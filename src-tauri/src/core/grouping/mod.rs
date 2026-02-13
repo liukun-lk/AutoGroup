@@ -26,7 +26,13 @@ pub fn compute_optimal_grouping(
     let evaluated: Vec<_> = candidates
         .par_iter()
         .filter_map(|candidate| {
-            evaluator::evaluate_grouping(candidate, &dataset, &stat_config).ok()
+            evaluator::evaluate_grouping_with_constraints(
+                candidate,
+                &dataset,
+                &stat_config,
+                Some(&group_config.sex_constraints),
+            )
+            .ok()
         })
         .collect();
 

@@ -11,6 +11,8 @@ pub struct SheetConfig {
     pub include_statistics: bool,
     /// Whether to include summary sheet
     pub include_summary: bool,
+    /// Group constraints (for custom naming and reserve group handling)
+    pub group_constraints: Option<Vec<SexConstraint>>,
 }
 
 impl Default for SheetConfig {
@@ -19,6 +21,7 @@ impl Default for SheetConfig {
             selected_indicators: Vec::new(),
             include_statistics: true,
             include_summary: true,
+            group_constraints: None,
         }
     }
 }
@@ -27,6 +30,8 @@ impl Default for SheetConfig {
 #[derive(Debug, Clone)]
 struct ExportRow {
     group_id: usize,
+    group_name: String,
+    is_reserve: bool,
     animal_id: String,
     sex: Sex,
     indicators: Vec<f64>,
@@ -37,9 +42,10 @@ impl ExportRow {
         self.sex.to_chinese()
     }
 
-    /// Sort order: group (asc) > sex (female first) > animal_id (asc)
-    fn sort_key(&self) -> (usize, bool, String) {
+    /// Sort order: reserve groups last > group_id (asc) > sex (female first) > animal_id (asc)
+    fn sort_key(&self) -> (bool, usize, bool, String) {
         (
+            self.is_reserve, // false for experimental, true for reserve (reserve comes last)
             self.group_id,
             self.sex == Sex::Male, // false for Female, true for Male
             self.animal_id.clone(),
@@ -142,6 +148,18 @@ fn write_grouping_sheet_to(
     dataset: &Dataset,
     config: &SheetConfig,
 ) -> Result<()> {
+    // Build group constraint lookup map
+    let group_constraints_map: std::collections::HashMap<usize, &SexConstraint> = config
+        .group_constraints
+        .as_ref()
+        .map(|constraints| {
+            constraints
+                .iter()
+                .map(|c| (c.group_index, c))
+                .collect()
+        })
+        .unwrap_or_default();
+
     // Prepare export rows
     let mut export_rows = Vec::new();
     for assignment in &result.assignments {
@@ -160,15 +178,27 @@ fn write_grouping_sheet_to(
             .map(|name| animal.indicators.get(name).copied().unwrap_or(0.0))
             .collect();
 
+        // Get group metadata
+        let constraint = group_constraints_map.get(&assignment.group_id);
+        let is_reserve = constraint
+            .map(|c| c.group_type == GroupType::Reserve)
+            .unwrap_or(false);
+
+        let group_name = constraint
+            .and_then(|c| c.custom_name.clone())
+            .unwrap_or_else(|| format!("组{}", assignment.group_id + 1));
+
         export_rows.push(ExportRow {
-            group_id: assignment.group_id + 1, // Convert to 1-based
+            group_id: assignment.group_id,
+            group_name,
+            is_reserve,
             animal_id: assignment.animal_id.clone(),
             sex: assignment.sex,
             indicators: indicator_values,
         });
     }
 
-    // Sort rows: group > sex (female first) > animal_id
+    // Sort rows: experimental groups first (by group_id), then reserve groups last
     export_rows.sort_by_key(|row| row.sort_key());
 
     let header_format = Format::new().set_bold();
@@ -201,7 +231,7 @@ fn write_grouping_sheet_to(
     for (row_idx, row) in export_rows.iter().enumerate() {
         let excel_row = (row_idx + 2) as u32; // Data starts from Row 2
 
-        sheet.write_number(excel_row, 0, row.group_id as f64)?;
+        sheet.write_string(excel_row, 0, &row.group_name)?;
         sheet.write_string(excel_row, 1, &row.animal_id)?;
         sheet.write_string(excel_row, 2, row.sex_chinese())?;
 
@@ -464,26 +494,42 @@ mod tests {
         let mut rows = vec![
             ExportRow {
                 group_id: 2,
+                group_name: "组3".to_string(),
+                is_reserve: false,
                 animal_id: "M001".to_string(),
                 sex: Sex::Male,
                 indicators: vec![],
             },
             ExportRow {
                 group_id: 1,
+                group_name: "组2".to_string(),
+                is_reserve: false,
                 animal_id: "F002".to_string(),
                 sex: Sex::Female,
                 indicators: vec![],
             },
             ExportRow {
                 group_id: 1,
+                group_name: "组2".to_string(),
+                is_reserve: false,
                 animal_id: "M003".to_string(),
                 sex: Sex::Male,
                 indicators: vec![],
             },
             ExportRow {
                 group_id: 1,
+                group_name: "组2".to_string(),
+                is_reserve: false,
                 animal_id: "F001".to_string(),
                 sex: Sex::Female,
+                indicators: vec![],
+            },
+            ExportRow {
+                group_id: 3,
+                group_name: "备用动物".to_string(),
+                is_reserve: true,
+                animal_id: "R001".to_string(),
+                sex: Sex::Male,
                 indicators: vec![],
             },
         ];
@@ -491,12 +537,17 @@ mod tests {
         rows.sort_by_key(|r| r.sort_key());
 
         // Expected order:
-        // Group 1: F001 (Female), F002 (Female), M003 (Male)
-        // Group 2: M001 (Male)
+        // Experimental groups first (by group_id):
+        //   Group 1: F001 (Female), F002 (Female), M003 (Male)
+        //   Group 2: M001 (Male)
+        // Reserve groups last:
+        //   Reserve: R001 (Male)
         assert_eq!(rows[0].animal_id, "F001");
         assert_eq!(rows[1].animal_id, "F002");
         assert_eq!(rows[2].animal_id, "M003");
         assert_eq!(rows[3].animal_id, "M001");
+        assert_eq!(rows[4].animal_id, "R001");
+        assert_eq!(rows[4].group_name, "备用动物");
     }
 
     #[test]
@@ -587,6 +638,7 @@ mod tests {
             selected_indicators: vec!["Weight".to_string()],
             include_statistics: true,
             include_summary: true,
+            group_constraints: None,
         };
 
         let output_path = "/tmp/test_grouping_export.xlsx";

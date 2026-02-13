@@ -44,11 +44,15 @@ mod export_integration_tests {
                     group_index: 0,
                     male_count: 3,
                     female_count: 2,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
                 SexConstraint {
                     group_index: 1,
                     male_count: 3,
                     female_count: 1,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
             ],
         };
@@ -85,6 +89,7 @@ mod export_integration_tests {
             selected_indicators: dataset.indicator_names.clone(), // Export ALL indicators
             include_statistics: true,
             include_summary: true,
+            group_constraints: None,
         };
 
         let output_path = "/tmp/autogroup_export_test.xlsx";
@@ -148,11 +153,15 @@ mod export_integration_tests {
                     group_index: 0,
                     male_count: 3,
                     female_count: 2,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
                 SexConstraint {
                     group_index: 1,
                     male_count: 3,
                     female_count: 1,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
             ],
         };
@@ -171,6 +180,7 @@ mod export_integration_tests {
             selected_indicators, // Only export 5 indicators
             include_statistics: true,
             include_summary: true,
+            group_constraints: None,
         };
 
         let output_path = "/tmp/autogroup_export_selected.xlsx";

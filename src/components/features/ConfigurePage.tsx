@@ -30,7 +30,11 @@ export function ConfigurePage() {
   const [alpha, setAlpha] = useState(0.05);
   const [mode, setMode] = useState<"Strict" | "Optimized">("Strict");
 
-  // Dynamic sex constraints array
+  // Reserve group state
+  const [reserveMaleCount, setReserveMaleCount] = useState(0);
+  const [reserveFemaleCount, setReserveFemaleCount] = useState(0);
+
+  // Dynamic sex constraints array (for experimental groups only)
   const [sexConstraints, setSexConstraints] = useState<SexConstraint[]>([]);
 
   // Track if default indicators have been initialized
@@ -57,24 +61,29 @@ export function ConfigurePage() {
   useEffect(() => {
     if (!dataset) return;
 
-    // Calculate average animals per group
-    const avgMalesPerGroup = Math.floor(dataset.metadata.male_count / numGroups);
-    const avgFemalesPerGroup = Math.floor(dataset.metadata.female_count / numGroups);
+    // Calculate available animals after reserve group allocation
+    const availableMales = dataset.metadata.male_count - reserveMaleCount;
+    const availableFemales = dataset.metadata.female_count - reserveFemaleCount;
+
+    // Calculate average animals per experimental group
+    const avgMalesPerGroup = Math.floor(availableMales / numGroups);
+    const avgFemalesPerGroup = Math.floor(availableFemales / numGroups);
 
     // Initialize constraints with even distribution
     // First group takes the remainder to ensure total matches
     const initialConstraints: SexConstraint[] = Array.from({ length: numGroups }, (_, i) => ({
       group_index: i,
       male_count: i === 0
-        ? dataset.metadata.male_count - avgMalesPerGroup * (numGroups - 1)
+        ? availableMales - avgMalesPerGroup * (numGroups - 1)
         : avgMalesPerGroup,
       female_count: i === 0
-        ? dataset.metadata.female_count - avgFemalesPerGroup * (numGroups - 1)
+        ? availableFemales - avgFemalesPerGroup * (numGroups - 1)
         : avgFemalesPerGroup,
+      group_type: "Experimental",
     }));
 
     setSexConstraints(initialConstraints);
-  }, [numGroups, dataset]);
+  }, [numGroups, dataset, reserveMaleCount, reserveFemaleCount]);
 
   // Update individual sex constraint
   const updateSexConstraint = (groupIndex: number, field: 'male_count' | 'female_count', value: number) => {
@@ -92,14 +101,27 @@ export function ConfigurePage() {
   const handleNext = useCallback(() => {
     if (!dataset) return;
 
-    // Build group config using dynamic sex constraints
+    // Build complete sex constraints: experimental groups + reserve group
+    const allConstraints: SexConstraint[] = [
+      ...sexConstraints,
+      // Add reserve group as the last constraint
+      {
+        group_index: numGroups,
+        male_count: reserveMaleCount,
+        female_count: reserveFemaleCount,
+        group_type: "Reserve",
+        custom_name: "备用动物",
+      },
+    ];
+
+    // Build group config using complete constraints
     const groupConfig: GroupConfig = {
-      num_groups: numGroups,
+      num_groups: numGroups + 1, // Include reserve group
       animals_per_group: {
         type: "Uniform",
         value: animalsPerGroup,
       },
-      sex_constraints: sexConstraints,
+      sex_constraints: allConstraints,
     };
 
     // Build stat config
@@ -119,6 +141,8 @@ export function ConfigurePage() {
     numGroups,
     animalsPerGroup,
     sexConstraints,
+    reserveMaleCount,
+    reserveFemaleCount,
     alpha,
     mode,
     selectedIndicators,
@@ -161,9 +185,10 @@ export function ConfigurePage() {
   }
 
   // Validate sex constraints
-  const totalRequired = sexConstraints.reduce((sum, c) => sum + c.male_count + c.female_count, 0);
-  const totalMales = sexConstraints.reduce((sum, c) => sum + c.male_count, 0);
-  const totalFemales = sexConstraints.reduce((sum, c) => sum + c.female_count, 0);
+  const totalRequired = sexConstraints.reduce((sum, c) => sum + c.male_count + c.female_count, 0)
+    + reserveMaleCount + reserveFemaleCount;
+  const totalMales = sexConstraints.reduce((sum, c) => sum + c.male_count, 0) + reserveMaleCount;
+  const totalFemales = sexConstraints.reduce((sum, c) => sum + c.female_count, 0) + reserveFemaleCount;
 
   const isValid =
     totalRequired === dataset.metadata.total_animals &&
@@ -210,6 +235,44 @@ export function ConfigurePage() {
           <div>
             <Label className="text-base mb-3 block">性别约束</Label>
             <div className="grid grid-cols-2 gap-4">
+              {/* Reserve Group Card - Always first with special styling */}
+              <Card className="border-dashed border-2 border-muted-foreground/30 bg-muted/20">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm flex items-center justify-between">
+                    <span>备用动物</span>
+                    <span className="text-xs font-normal text-muted-foreground">
+                      (不参与统计)
+                    </span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="space-y-2">
+                    <Label className="text-xs">雄性数量</Label>
+                    <Input
+                      type="number"
+                      value={reserveMaleCount}
+                      onChange={(e) => setReserveMaleCount(Number(e.target.value))}
+                      min={0}
+                      max={dataset.metadata.male_count}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs">雌性数量</Label>
+                    <Input
+                      type="number"
+                      value={reserveFemaleCount}
+                      onChange={(e) => setReserveFemaleCount(Number(e.target.value))}
+                      min={0}
+                      max={dataset.metadata.female_count}
+                    />
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    小计: {reserveMaleCount + reserveFemaleCount} 只
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Experimental Groups */}
               {sexConstraints.map((constraint, index) => (
                 <Card key={constraint.group_index}>
                   <CardHeader className="pb-3">

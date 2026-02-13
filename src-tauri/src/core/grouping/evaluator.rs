@@ -1,5 +1,6 @@
 use crate::core::{models::*, stats};
 use anyhow::Result;
+use std::collections::HashMap;
 
 /// Evaluate a candidate grouping by computing statistical tests
 pub fn evaluate_grouping(
@@ -7,22 +8,57 @@ pub fn evaluate_grouping(
     dataset: &Dataset,
     stat_config: &StatConfig,
 ) -> Result<GroupingResult> {
+    evaluate_grouping_with_constraints(candidate, dataset, stat_config, None)
+}
+
+/// Evaluate a candidate grouping with group constraints
+/// If group_constraints is provided, reserve groups are excluded from statistics
+pub fn evaluate_grouping_with_constraints(
+    candidate: &CandidateGrouping,
+    dataset: &Dataset,
+    stat_config: &StatConfig,
+    group_constraints: Option<&[SexConstraint]>,
+) -> Result<GroupingResult> {
     let mut statistics = Vec::new();
     let mut min_p = f64::MAX;
     let mut sum_p = 0.0;
     let mut num_invalid = 0;
 
+    // Build a map of group_index -> is_experimental
+    let experimental_groups: HashMap<usize, bool> = if let Some(constraints) = group_constraints {
+        constraints
+            .iter()
+            .map(|c| (c.group_index, c.group_type == GroupType::Experimental))
+            .collect()
+    } else {
+        // If no constraints provided, all groups are experimental
+        HashMap::new()
+    };
+
     // For each selected indicator, compute P-value
     for indicator_name in &stat_config.selected_indicators {
-        // Extract indicator values for each group
+        // Extract indicator values for each group, excluding reserve groups
         let groups: Vec<Vec<f64>> = candidate
             .groups
             .iter()
-            .map(|animal_indices| {
-                animal_indices
+            .enumerate()
+            .filter_map(|(group_idx, animal_indices)| {
+                // Skip reserve groups (they don't participate in statistical tests)
+                let is_experimental = experimental_groups
+                    .get(&group_idx)
+                    .copied()
+                    .unwrap_or(true); // Default to experimental if no constraint
+
+                if !is_experimental {
+                    return None;
+                }
+
+                let values: Vec<f64> = animal_indices
                     .iter()
                     .filter_map(|&idx| dataset.animals[idx].indicators.get(indicator_name).copied())
-                    .collect()
+                    .collect();
+
+                Some(values)
             })
             .collect();
 

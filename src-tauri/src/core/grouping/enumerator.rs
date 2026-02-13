@@ -356,6 +356,20 @@ fn validate_config(animals: &[Animal], config: &GroupConfig) -> Result<()> {
         ));
     }
 
+    // Validate experimental groups have at least 2 animals (for statistical tests)
+    // Reserve groups can be empty
+    for constraint in &config.sex_constraints {
+        let group_size = constraint.male_count + constraint.female_count;
+
+        if constraint.group_type == GroupType::Experimental && group_size < 2 {
+            return Err(anyhow!(
+                "Experimental group {} must have at least 2 animals (current: {})",
+                constraint.group_index + 1,
+                group_size
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -451,11 +465,15 @@ mod tests {
                     group_index: 0,
                     male_count: 3,
                     female_count: 2,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
                 SexConstraint {
                     group_index: 1,
                     male_count: 3,
                     female_count: 2,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
             ],
         };
@@ -500,6 +518,8 @@ mod tests {
                 group_index: 0,
                 male_count: 3,
                 female_count: 0,
+                group_type: GroupType::Experimental,
+                custom_name: None,
             }],
         };
 
@@ -537,16 +557,22 @@ mod tests {
                     group_index: 0,
                     male_count: 2,
                     female_count: 1,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
                 SexConstraint {
                     group_index: 1,
                     male_count: 2,
                     female_count: 1,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
                 SexConstraint {
                     group_index: 2,
                     male_count: 2,
                     female_count: 1,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
             ],
         };
@@ -601,16 +627,22 @@ mod tests {
                     group_index: 0,
                     male_count: 2,
                     female_count: 1,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
                 SexConstraint {
                     group_index: 1,
                     male_count: 2,
                     female_count: 1,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
                 SexConstraint {
                     group_index: 2,
                     male_count: 2,
                     female_count: 1,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
                 },
             ],
         };

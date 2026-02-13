@@ -101,11 +101,32 @@ pub enum GroupSize {
     Custom { values: Vec<usize> },
 }
 
+/// Group type classification
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GroupType {
+    /// Normal experimental group (participates in statistical tests)
+    Experimental,
+    /// Reserve animals group (excluded from statistical tests)
+    Reserve,
+}
+
+impl Default for GroupType {
+    fn default() -> Self {
+        GroupType::Experimental
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SexConstraint {
     pub group_index: usize,
     pub male_count: usize,
     pub female_count: usize,
+    /// Group type (defaults to Experimental for backward compatibility)
+    #[serde(default)]
+    pub group_type: GroupType,
+    /// Custom name for the group (e.g., "备用动物" for reserve group)
+    #[serde(default)]
+    pub custom_name: Option<String>,
 }
 
 /// Statistical configuration
