@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { useAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { resultAtom, currentStepAtom, setErrorAtom, datasetAtom, selectedIndicatorsAtom } from "@/stores";
+import { resultAtom, currentStepAtom, setErrorAtom, datasetAtom, selectedIndicatorsAtom, resetStateAtom } from "@/stores";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -29,6 +29,7 @@ export function ResultsPage() {
   const [selectedIndicators] = useAtom(selectedIndicatorsAtom);
   const [, setCurrentStep] = useAtom(currentStepAtom);
   const [, setError] = useAtom(setErrorAtom);
+  const [, resetState] = useAtom(resetStateAtom);
 
   const handleExport = useCallback(async () => {
     if (!result || !dataset) return;
@@ -66,7 +67,7 @@ export function ResultsPage() {
   }, [result, dataset, selectedIndicators, setError]);
 
   const handleRestart = () => {
-    setCurrentStep("upload");
+    resetState(null);
   };
 
   if (!result) {

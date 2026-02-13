@@ -48,8 +48,9 @@ export function ConfigurePage() {
     if (selectedIndicators.length === 0) {
       const defaultIndicators = filterDefaultIndicators(dataset.indicator_names);
       setSelectedIndicators(defaultIndicators);
-      setDefaultsInitialized(true);
     }
+
+    setDefaultsInitialized(true);
   }, [dataset, selectedIndicators.length, defaultsInitialized, setSelectedIndicators]);
 
   // Reset initialization flag when dataset changes
@@ -99,7 +100,9 @@ export function ConfigurePage() {
   };
 
   const handleNext = useCallback(() => {
-    if (!dataset) return;
+    if (!dataset || selectedIndicators.length === 0) {
+      return;
+    }
 
     // Build complete sex constraints: experimental groups + reserve group
     const allConstraints: SexConstraint[] = [
@@ -126,9 +129,7 @@ export function ConfigurePage() {
 
     // Build stat config
     const statConfig: StatConfig = {
-      selected_indicators: selectedIndicators.length > 0
-        ? selectedIndicators
-        : dataset.indicator_names,
+      selected_indicators: selectedIndicators,
       alpha,
       mode,
     };
@@ -152,17 +153,11 @@ export function ConfigurePage() {
   ]);
 
   const toggleIndicator = (indicator: string) => {
-    setSelectedIndicators((prev) => {
-      // If empty (all selected), clicking should deselect one
-      if (prev.length === 0) {
-        return dataset!.indicator_names.filter((i) => i !== indicator);
-      }
-
-      // Normal toggle behavior
-      return prev.includes(indicator)
+    setSelectedIndicators((prev) =>
+      prev.includes(indicator)
         ? prev.filter((i) => i !== indicator)
-        : [...prev, indicator];
-    });
+        : [...prev, indicator]
+    );
   };
 
   const selectAllIndicators = () => {
@@ -190,10 +185,14 @@ export function ConfigurePage() {
   const totalMales = sexConstraints.reduce((sum, c) => sum + c.male_count, 0) + reserveMaleCount;
   const totalFemales = sexConstraints.reduce((sum, c) => sum + c.female_count, 0) + reserveFemaleCount;
 
-  const isValid =
+  const areSexConstraintsValid =
     totalRequired === dataset.metadata.total_animals &&
     totalMales === dataset.metadata.male_count &&
     totalFemales === dataset.metadata.female_count;
+
+  const hasSelectedIndicators = selectedIndicators.length > 0;
+
+  const isValid = areSexConstraintsValid && hasSelectedIndicators;
 
   return (
     <div className="container max-w-6xl mx-auto py-8 space-y-6">
@@ -305,7 +304,7 @@ export function ConfigurePage() {
               ))}
             </div>
 
-            {!isValid && (
+            {!areSexConstraintsValid && (
               <Alert variant="destructive" className="mt-4">
                 <AlertDescription>
                   约束配置不正确：需要 {dataset.metadata.total_animals} 只动物
@@ -383,7 +382,7 @@ export function ConfigurePage() {
             <div>
               <CardTitle>选择参与统计的指标</CardTitle>
               <CardDescription>
-                已选择 {selectedIndicators.length === 0 ? dataset.indicator_names.length : selectedIndicators.length} / {dataset.indicator_names.length} 个指标
+                已选择 {selectedIndicators.length} / {dataset.indicator_names.length} 个指标
               </CardDescription>
             </div>
             <div className="flex gap-2">
@@ -428,7 +427,7 @@ export function ConfigurePage() {
               <div key={indicator} className="flex items-center space-x-2">
                 <Checkbox
                   id={indicator}
-                  checked={selectedIndicators.length === 0 || selectedIndicators.includes(indicator)}
+                  checked={selectedIndicators.includes(indicator)}
                   onCheckedChange={() => toggleIndicator(indicator)}
                 />
                 <Label
@@ -449,10 +448,17 @@ export function ConfigurePage() {
           <ArrowLeft className="mr-2 h-4 w-4" />
           返回
         </Button>
-        <Button onClick={handleNext} disabled={!isValid}>
-          开始计算
-          <ArrowRight className="ml-2 h-4 w-4" />
-        </Button>
+        <div className="flex flex-col items-end gap-2">
+          {!hasSelectedIndicators && (
+            <span className="text-xs text-destructive">
+              请至少选择一个参与统计的指标
+            </span>
+          )}
+          <Button onClick={handleNext} disabled={!isValid}>
+            开始计算
+            <ArrowRight className="ml-2 h-4 w-4" />
+          </Button>
+        </div>
       </div>
     </div>
   );

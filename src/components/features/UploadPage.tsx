@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { DragDropEvent } from "@tauri-apps/api/webview";
-import { datasetAtom, currentStepAtom, clearErrorAtom } from "@/stores";
+import { datasetAtom, currentStepAtom, clearErrorAtom, resetStateAtom } from "@/stores";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -15,6 +15,7 @@ export function UploadPage() {
   const [dataset, setDataset] = useAtom(datasetAtom);
   const [, setCurrentStep] = useAtom(currentStepAtom);
   const [, clearError] = useAtom(clearErrorAtom);
+  const [, resetState] = useAtom(resetStateAtom);
   const [isLoading, setIsLoading] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -24,6 +25,7 @@ export function UploadPage() {
 
   const handleFileParse = useCallback(async (filePath: string) => {
     try {
+      resetState(null);
       setIsLoading(true);
       clearError();
       setLocalError(null);
@@ -39,7 +41,7 @@ export function UploadPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [setDataset, setCurrentStep, clearError]);
+  }, [resetState, setDataset, setCurrentStep, clearError]);
 
   const handleFileSelect = useCallback(async () => {
     try {
