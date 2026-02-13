@@ -13,8 +13,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ArrowLeft, ArrowRight, Settings } from "lucide-react";
+import { ArrowLeft, ArrowRight, Settings, Info } from "lucide-react";
 import type { GroupConfig, StatConfig, SexConstraint } from "@/types";
+import { getExcludedIndicators, filterDefaultIndicators } from "@/utils/indicator-filter";
 
 export function ConfigurePage() {
   const [dataset] = useAtom(datasetAtom);
@@ -31,6 +32,26 @@ export function ConfigurePage() {
 
   // Dynamic sex constraints array
   const [sexConstraints, setSexConstraints] = useState<SexConstraint[]>([]);
+
+  // Track if default indicators have been initialized
+  const [defaultsInitialized, setDefaultsInitialized] = useState(false);
+
+  // Initialize default selected indicators (only once per dataset)
+  useEffect(() => {
+    if (!dataset || defaultsInitialized) return;
+
+    // Only initialize if selectedIndicators is empty (first load)
+    if (selectedIndicators.length === 0) {
+      const defaultIndicators = filterDefaultIndicators(dataset.indicator_names);
+      setSelectedIndicators(defaultIndicators);
+      setDefaultsInitialized(true);
+    }
+  }, [dataset, selectedIndicators.length, defaultsInitialized, setSelectedIndicators]);
+
+  // Reset initialization flag when dataset changes
+  useEffect(() => {
+    setDefaultsInitialized(false);
+  }, [dataset]);
 
   // Initialize sex constraints when numGroups or dataset changes
   useEffect(() => {
@@ -127,6 +148,9 @@ export function ConfigurePage() {
   const clearAllIndicators = () => {
     setSelectedIndicators([]);
   };
+
+  // Get list of excluded indicators for display
+  const excludedIndicators = dataset ? getExcludedIndicators(dataset.indicator_names) : [];
 
   if (!dataset) {
     return (
@@ -320,6 +344,22 @@ export function ConfigurePage() {
           </div>
         </CardHeader>
         <CardContent>
+          {/* Info about excluded indicators */}
+          {excludedIndicators.length > 0 && (
+            <Alert className="mb-4">
+              <Info className="h-4 w-4" />
+              <AlertDescription>
+                <div className="font-medium mb-1">自动过滤提示</div>
+                <div className="text-sm">
+                  以下 {excludedIndicators.length} 个字段已默认排除（可手动选择）：
+                  <span className="text-muted-foreground ml-1">
+                    {excludedIndicators.join(", ")}
+                  </span>
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
+
           <div className="grid grid-cols-3 gap-4 max-h-96 overflow-y-auto">
             {dataset.indicator_names.map((indicator) => (
               <div key={indicator} className="flex items-center space-x-2">

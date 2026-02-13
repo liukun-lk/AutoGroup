@@ -167,16 +167,48 @@ pub fn parse_excel_file(path: &str) -> Result<Dataset> {
 
 /// Check if string is a unit (contains /, parentheses, or common unit patterns)
 fn is_unit_string(s: &str) -> bool {
-    !s.is_empty()
-        && (s.contains('/')
-            || s.contains('(')
-            || s.contains("mol")
-            || s.contains('^')
-            || s == "kg"
-            || s == "℃"
-            || s == "U"
-            || s == "g"
-            || s == "L")
+    if s.is_empty() {
+        return false;
+    }
+
+    // Pure unit patterns (not indicator names with units)
+    // Units are typically short and contain only unit characters
+    let common_pure_units = [
+        "kg", "g", "mg", "ug", "ng",
+        "℃", "°C",
+        "L", "mL", "uL",
+        "U", "IU",
+        "mol", "mmol", "umol", "nmol",
+        "m", "cm", "mm",
+        "sec", "min", "h",
+        "%",
+        "fL", "pg",
+        "U/L", "g/L", "mg/L", "mmol/L", "umol/L", "nmol/L",
+        "10^9/L", "10^12/L",
+        "deg",
+        "A/G", "AST/ALT", // Ratio indicators treated as units in some cases
+    ];
+
+    // Check if it's exactly a common pure unit
+    if common_pure_units.contains(&s) {
+        return true;
+    }
+
+    // For strings with parentheses or slashes, check if they look like pure units
+    // Pure units: "U/L", "10^9/L", "mmol/L" - short, no uppercase letters at start
+    // Not units: "WBC(10^9/L)", "RBC(10^12/L)" - have prefix before parenthesis
+
+    // If contains '(', check if it has indicator prefix before parenthesis
+    if let Some(paren_idx) = s.find('(') {
+        // If there's text before '(', it's likely an indicator name with unit
+        // e.g., "WBC(10^9/L)" has "WBC" before '('
+        if paren_idx > 0 && s[..paren_idx].chars().any(|c| c.is_ascii_uppercase()) {
+            return false;
+        }
+    }
+
+    // Short strings with only unit-like characters
+    s.len() <= 10 && (s.contains('/') || s.contains('^') || s.contains("mol"))
 }
 
 // The following functions are currently unused but kept for potential future use
@@ -329,7 +361,8 @@ fn parse_dual_row_header(prev_row_val: &str, curr_row_val: &str) -> (String, Str
 
     // Case 2: prev_row has indicator name (ALT, AST), curr_row has unit (U/L)
     // Result: key="ALT", display="ALT", unit="U/L"
-    if !prev_is_unit && !prev_is_simple && curr_is_unit {
+    // IMPORTANT: Only apply this case if prev_row is NOT empty
+    if !prev_row_val.is_empty() && !prev_is_unit && !prev_is_simple && curr_is_unit {
         return (
             prev_row_val.to_string(),
             prev_row_val.to_string(),
