@@ -1,8 +1,8 @@
+pub mod anova;
+pub mod dunnett;
 pub mod levene;
 pub mod ttest;
-pub mod anova;
 pub mod tukey;
-pub mod dunnett;
 
 use anyhow::Result;
 
@@ -37,12 +37,22 @@ pub fn compute_p_value(
             // Variance homogeneous: One-way ANOVA + Tukey HSD
             let p = anova::one_way_anova(groups)?;
             let posthoc = tukey::tukey_hsd(groups)?;
-            Ok((p_levene, p, "One-way ANOVA + Tukey HSD".to_string(), Some(posthoc)))
+            Ok((
+                p_levene,
+                p,
+                "One-way ANOVA + Tukey HSD".to_string(),
+                Some(posthoc),
+            ))
         } else {
             // Variance not homogeneous: Welch ANOVA + Dunnett's T3
             let p = anova::welch_anova(groups)?;
             let posthoc = dunnett::dunnett_t3(groups)?;
-            Ok((p_levene, p, "Welch ANOVA + Dunnett's T3".to_string(), Some(posthoc)))
+            Ok((
+                p_levene,
+                p,
+                "Welch ANOVA + Dunnett's T3".to_string(),
+                Some(posthoc),
+            ))
         }
     }
 }

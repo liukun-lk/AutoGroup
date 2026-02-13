@@ -7,5 +7,5 @@ pub async fn compute_grouping(
     stat_config: StatConfig,
 ) -> Result<MultiGroupingResult, String> {
     grouping::compute_optimal_grouping(dataset, group_config, stat_config)
-        .map_err(|e| format!("Grouping computation failed: {}", e))
+        .map_err(|e| format!("Grouping computation failed: {e}"))
 }

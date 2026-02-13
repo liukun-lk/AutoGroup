@@ -21,12 +21,7 @@ pub fn evaluate_grouping(
             .map(|animal_indices| {
                 animal_indices
                     .iter()
-                    .filter_map(|&idx| {
-                        dataset.animals[idx]
-                            .indicators
-                            .get(indicator_name)
-                            .copied()
-                    })
+                    .filter_map(|&idx| dataset.animals[idx].indicators.get(indicator_name).copied())
                     .collect()
             })
             .collect();
@@ -37,7 +32,8 @@ pub fn evaluate_grouping(
         }
 
         // Compute P-value using appropriate statistical test
-        let (levene_p_value, diff_p_value, test_method, posthoc_results) = stats::compute_p_value(&groups, stat_config.alpha)?;
+        let (levene_p_value, diff_p_value, test_method, posthoc_results) =
+            stats::compute_p_value(&groups, stat_config.alpha)?;
 
         // For multi-group (≥3), check post-hoc results
         let mut is_valid = diff_p_value > stat_config.alpha;

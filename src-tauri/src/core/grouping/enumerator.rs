@@ -6,10 +6,7 @@ use rand::thread_rng;
 /// Generate all possible groupings through exhaustive enumeration
 /// Suitable for datasets with ≤50 animals
 /// Automatically switches to Monte Carlo sampling if combination count exceeds threshold
-pub fn enumerate_all(
-    animals: &[Animal],
-    config: &GroupConfig,
-) -> Result<Vec<CandidateGrouping>> {
+pub fn enumerate_all(animals: &[Animal], config: &GroupConfig) -> Result<Vec<CandidateGrouping>> {
     const MAX_EXHAUSTIVE_COMBINATIONS: usize = 500_000;
     const MONTE_CARLO_SAMPLE_SIZE: usize = 100_000;
 
@@ -35,8 +32,7 @@ pub fn enumerate_all(
     let estimated_count = estimate_combination_count(&male_indices, &female_indices, config);
 
     println!(
-        "Estimated combinations: {} (threshold: {})",
-        estimated_count, MAX_EXHAUSTIVE_COMBINATIONS
+        "Estimated combinations: {estimated_count} (threshold: {MAX_EXHAUSTIVE_COMBINATIONS})"
     );
 
     // Step 4: Choose enumeration strategy
@@ -48,7 +44,9 @@ pub fn enumerate_all(
         enumerate_multi_groups_exhaustive(&male_indices, &female_indices, config)?
     } else {
         // Use Monte Carlo sampling for large combination spaces
-        println!("Using Monte Carlo sampling with {} samples", MONTE_CARLO_SAMPLE_SIZE);
+        println!(
+            "Using Monte Carlo sampling with {MONTE_CARLO_SAMPLE_SIZE} samples"
+        );
         enumerate_multi_groups_sampling(
             &male_indices,
             &female_indices,
@@ -286,7 +284,9 @@ fn estimate_combination_count(
         let male_combos = binomial_coefficient(remaining_males, constraint.male_count);
         let female_combos = binomial_coefficient(remaining_females, constraint.female_count);
 
-        count = count.saturating_mul(male_combos).saturating_mul(female_combos);
+        count = count
+            .saturating_mul(male_combos)
+            .saturating_mul(female_combos);
 
         remaining_males -= constraint.male_count;
         remaining_females -= constraint.female_count;
@@ -340,31 +340,19 @@ fn validate_config(animals: &[Animal], config: &GroupConfig) -> Result<()> {
     }
 
     // Check sex counts match
-    let total_males_required: usize = config
-        .sex_constraints
-        .iter()
-        .map(|c| c.male_count)
-        .sum();
+    let total_males_required: usize = config.sex_constraints.iter().map(|c| c.male_count).sum();
 
-    let total_females_required: usize = config
-        .sex_constraints
-        .iter()
-        .map(|c| c.female_count)
-        .sum();
+    let total_females_required: usize = config.sex_constraints.iter().map(|c| c.female_count).sum();
 
     if total_males_required != male_count {
         return Err(anyhow!(
-            "Total males required ({}) doesn't match available ({})",
-            total_males_required,
-            male_count
+            "Total males required ({total_males_required}) doesn't match available ({male_count})"
         ));
     }
 
     if total_females_required != female_count {
         return Err(anyhow!(
-            "Total females required ({}) doesn't match available ({})",
-            total_females_required,
-            female_count
+            "Total females required ({total_females_required}) doesn't match available ({female_count})"
         ));
     }
 
@@ -440,7 +428,7 @@ mod tests {
 
         for i in 0..6 {
             animals.push(Animal {
-                id: format!("M{}", i),
+                id: format!("M{i}"),
                 sex: Sex::Male,
                 indicators: HashMap::new(),
             });
@@ -448,7 +436,7 @@ mod tests {
 
         for i in 0..4 {
             animals.push(Animal {
-                id: format!("F{}", i),
+                id: format!("F{i}"),
                 sex: Sex::Female,
                 indicators: HashMap::new(),
             });
@@ -526,7 +514,7 @@ mod tests {
 
         for i in 0..6 {
             animals.push(Animal {
-                id: format!("M{}", i),
+                id: format!("M{i}"),
                 sex: Sex::Male,
                 indicators: HashMap::new(),
             });
@@ -534,7 +522,7 @@ mod tests {
 
         for i in 0..3 {
             animals.push(Animal {
-                id: format!("F{}", i),
+                id: format!("F{i}"),
                 sex: Sex::Female,
                 indicators: HashMap::new(),
             });
@@ -582,8 +570,7 @@ mod tests {
             for &idx in group {
                 assert!(
                     all_indices.insert(idx),
-                    "Animal {} appears in multiple groups",
-                    idx
+                    "Animal {idx} appears in multiple groups"
                 );
             }
         }
@@ -633,5 +620,4 @@ mod tests {
         // C(6,2) * C(3,1) * C(4,2) * C(2,1) * 1 * 1 = 15 * 3 * 6 * 2 = 540
         assert_eq!(count, 540);
     }
-
 }

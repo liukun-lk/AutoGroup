@@ -20,7 +20,7 @@ impl Sex {
         match s.trim().to_uppercase().as_str() {
             "M" | "MALE" | "雄性" => Ok(Sex::Male),
             "F" | "FEMALE" | "雌性" => Ok(Sex::Female),
-            _ => Err(format!("Invalid sex value: {}", s)),
+            _ => Err(format!("Invalid sex value: {s}")),
         }
     }
 

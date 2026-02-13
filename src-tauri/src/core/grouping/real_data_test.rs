@@ -22,7 +22,7 @@ mod real_data_test {
                 d
             }
             Err(e) => {
-                panic!("Failed to parse Excel: {}", e);
+                panic!("Failed to parse Excel: {e}");
             }
         };
 
@@ -31,7 +31,7 @@ mod real_data_test {
         match validator::validate_dataset(&dataset) {
             Ok(_) => println!("✓ Dataset validation passed"),
             Err(e) => {
-                panic!("Dataset validation failed: {}", e);
+                panic!("Dataset validation failed: {e}");
             }
         }
 
@@ -64,7 +64,7 @@ mod real_data_test {
             selected_indicators.len()
         );
         for indicator in &selected_indicators {
-            println!("  - {}", indicator);
+            println!("  - {indicator}");
         }
 
         // Configure grouping based on actual animal counts
@@ -122,17 +122,20 @@ mod real_data_test {
             match grouping::compute_optimal_grouping(dataset.clone(), group_config, stat_config) {
                 Ok(r) => {
                     let elapsed = start.elapsed();
-                    println!("✓ Grouping computation completed in {:?}", elapsed);
+                    println!("✓ Grouping computation completed in {elapsed:?}");
                     println!("  Candidates found: {}", r.candidates.len());
                     println!("  Total evaluated: {}", r.total_evaluated);
                     r
                 }
                 Err(e) => {
-                    panic!("Grouping computation failed: {}", e);
+                    panic!("Grouping computation failed: {e}");
                 }
             };
 
-        let result = multi_result.candidates.first().expect("Should have at least one candidate");
+        let result = multi_result
+            .candidates
+            .first()
+            .expect("Should have at least one candidate");
 
         // Display results
         println!("\n=== RESULTS (Best Candidate) ===");
@@ -179,7 +182,7 @@ mod real_data_test {
                 .filter(|a| a.group_id == group_id)
                 .collect();
 
-            println!("\n  Group {}:", group_id);
+            println!("\n  Group {group_id}:");
             let males = group_members.iter().filter(|a| a.sex == Sex::Male).count();
             let females = group_members
                 .iter()
@@ -209,7 +212,7 @@ mod real_data_test {
                 // Show first 3 indicator values
                 for indicator_name in result.statistics.iter().take(3).map(|s| &s.indicator_name) {
                     if let Some(&value) = animal.indicators.get(indicator_name) {
-                        print!(" {}={:.1}", indicator_name, value);
+                        print!(" {indicator_name}={value:.1}");
                     }
                 }
                 println!();
@@ -256,7 +259,7 @@ mod real_data_test {
                 d
             }
             Err(e) => {
-                panic!("Failed to parse Excel: {}", e);
+                panic!("Failed to parse Excel: {e}");
             }
         };
 
@@ -324,19 +327,22 @@ mod real_data_test {
             match grouping::compute_optimal_grouping(dataset.clone(), group_config, stat_config) {
                 Ok(r) => {
                     let elapsed = start.elapsed();
-                    println!("✓ Grouping computation completed in {:?}", elapsed);
+                    println!("✓ Grouping computation completed in {elapsed:?}");
                     println!("  Candidates found: {}", r.candidates.len());
                     println!("  Total evaluated: {}", r.total_evaluated);
                     println!("  Total valid: {}", r.total_valid);
                     r
                 }
                 Err(e) => {
-                    panic!("Grouping computation failed: {}", e);
+                    panic!("Grouping computation failed: {e}");
                 }
             };
 
         // Get the best result
-        let result = multi_result.candidates.first().expect("Should have at least one candidate");
+        let result = multi_result
+            .candidates
+            .first()
+            .expect("Should have at least one candidate");
 
         // Display results
         println!("\n=== BEST RESULT (Rank #1) ===");
@@ -396,7 +402,7 @@ mod real_data_test {
                 .filter(|a| a.group_id == group_id)
                 .collect();
 
-            println!("\n  Group {}:", group_id);
+            println!("\n  Group {group_id}:");
             let males = group_members.iter().filter(|a| a.sex == Sex::Male).count();
             let females = group_members
                 .iter()
@@ -425,7 +431,7 @@ mod real_data_test {
                 // Show first 3 indicator values
                 for indicator_name in result.statistics.iter().take(3).map(|s| &s.indicator_name) {
                     if let Some(&value) = animal.indicators.get(indicator_name) {
-                        print!(" {}={:.1}", indicator_name, value);
+                        print!(" {indicator_name}={value:.1}");
                     }
                 }
                 println!();

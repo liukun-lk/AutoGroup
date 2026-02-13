@@ -46,9 +46,21 @@ mod integration_tests {
                 "Glucose".to_string(),
             ],
             indicator_metadata: vec![
-                IndicatorMetadata::new("Weight".to_string(), "Weight".to_string(), "kg".to_string()),
-                IndicatorMetadata::new("Temperature".to_string(), "Temperature".to_string(), "℃".to_string()),
-                IndicatorMetadata::new("Glucose".to_string(), "Glucose".to_string(), "mmol/L".to_string()),
+                IndicatorMetadata::new(
+                    "Weight".to_string(),
+                    "Weight".to_string(),
+                    "kg".to_string(),
+                ),
+                IndicatorMetadata::new(
+                    "Temperature".to_string(),
+                    "Temperature".to_string(),
+                    "℃".to_string(),
+                ),
+                IndicatorMetadata::new(
+                    "Glucose".to_string(),
+                    "Glucose".to_string(),
+                    "mmol/L".to_string(),
+                ),
             ],
             metadata: DatasetMetadata {
                 total_animals: 10,
@@ -95,7 +107,10 @@ mod integration_tests {
         assert!(multi_result.is_ok(), "Should find a valid grouping");
 
         let multi_result = multi_result.unwrap();
-        assert!(!multi_result.candidates.is_empty(), "Should have at least one candidate");
+        assert!(
+            !multi_result.candidates.is_empty(),
+            "Should have at least one candidate"
+        );
 
         let result = &multi_result.candidates[0];
 
@@ -138,7 +153,10 @@ mod integration_tests {
         println!("=== Grouping Result ===");
         println!("Min P-value: {:.6}", result.summary.min_p_value);
         println!("Mean P-value: {:.6}", result.summary.mean_p_value);
-        println!("Invalid indicators: {}", result.summary.num_invalid_indicators);
+        println!(
+            "Invalid indicators: {}",
+            result.summary.num_invalid_indicators
+        );
         println!("Meets criteria: {}", result.summary.meets_criteria);
         println!("Computation time: {}ms", result.computation_time_ms);
 
@@ -174,7 +192,7 @@ mod integration_tests {
             indicators.insert("Var2".to_string(), 20.0 + (i as f64) * 0.5);
 
             animals.push(Animal {
-                id: format!("M{}", i),
+                id: format!("M{i}"),
                 sex: Sex::Male,
                 indicators,
             });
@@ -186,7 +204,7 @@ mod integration_tests {
             indicators.insert("Var2".to_string(), 20.0 + (i as f64) * 0.5);
 
             animals.push(Animal {
-                id: format!("F{}", i),
+                id: format!("F{i}"),
                 sex: Sex::Female,
                 indicators,
             });
@@ -234,14 +252,20 @@ mod integration_tests {
 
         let multi_result = grouping::compute_optimal_grouping(dataset, group_config, stat_config);
 
-        assert!(multi_result.is_ok(), "Optimized mode should find a grouping");
+        assert!(
+            multi_result.is_ok(),
+            "Optimized mode should find a grouping"
+        );
 
         let multi_result = multi_result.unwrap();
         assert!(!multi_result.candidates.is_empty());
 
         let result = &multi_result.candidates[0];
         println!("Optimized mode result:");
-        println!("  Invalid indicators: {}", result.summary.num_invalid_indicators);
+        println!(
+            "  Invalid indicators: {}",
+            result.summary.num_invalid_indicators
+        );
         assert!(result.summary.num_invalid_indicators <= 1);
     }
 }

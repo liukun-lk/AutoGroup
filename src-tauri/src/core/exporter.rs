@@ -71,7 +71,7 @@ pub fn export_grouping_result(
 
     workbook
         .save(output_path)
-        .with_context(|| format!("Failed to save Excel file to {}", output_path))?;
+        .with_context(|| format!("Failed to save Excel file to {output_path}"))?;
 
     Ok(())
 }
@@ -90,21 +90,23 @@ pub fn export_multiple_results(
         let rank = idx + 1;
 
         // Sheet: Candidate N - Grouping
-        let mut grouping_sheet = workbook.add_worksheet();
+        let grouping_sheet = workbook.add_worksheet();
         grouping_sheet
-            .set_name(&format!("方案{}-分组", rank))
-            .with_context(|| format!("Failed to set sheet name for candidate {}", rank))?;
+            .set_name(format!("方案{rank}-分组"))
+            .with_context(|| format!("Failed to set sheet name for candidate {rank}"))?;
 
-        write_grouping_sheet_to(&mut grouping_sheet, result, dataset, config)?;
+        write_grouping_sheet_to(grouping_sheet, result, dataset, config)?;
 
         // Sheet: Candidate N - Statistics
         if config.include_statistics {
-            let mut stats_sheet = workbook.add_worksheet();
+            let stats_sheet = workbook.add_worksheet();
             stats_sheet
-                .set_name(&format!("方案{}-统计", rank))
-                .with_context(|| format!("Failed to set stats sheet name for candidate {}", rank))?;
+                .set_name(format!("方案{rank}-统计"))
+                .with_context(|| {
+                    format!("Failed to set stats sheet name for candidate {rank}")
+                })?;
 
-            write_statistics_sheet_to(&mut stats_sheet, result)?;
+            write_statistics_sheet_to(stats_sheet, result)?;
         }
     }
 
@@ -113,7 +115,7 @@ pub fn export_multiple_results(
 
     workbook
         .save(output_path)
-        .with_context(|| format!("Failed to save Excel file to {}", output_path))?;
+        .with_context(|| format!("Failed to save Excel file to {output_path}"))?;
 
     Ok(())
 }
@@ -125,12 +127,12 @@ fn write_grouping_sheet(
     dataset: &Dataset,
     config: &SheetConfig,
 ) -> Result<()> {
-    let mut sheet = workbook.add_worksheet();
+    let sheet = workbook.add_worksheet();
     sheet
         .set_name("分组结果")
         .context("Failed to set sheet name")?;
 
-    write_grouping_sheet_to(&mut sheet, result, dataset, config)
+    write_grouping_sheet_to(sheet, result, dataset, config)
 }
 
 /// Write grouping data to a specific worksheet
@@ -140,7 +142,6 @@ fn write_grouping_sheet_to(
     dataset: &Dataset,
     config: &SheetConfig,
 ) -> Result<()> {
-
     // Prepare export rows
     let mut export_rows = Vec::new();
     for assignment in &result.assignments {
@@ -148,7 +149,10 @@ fn write_grouping_sheet_to(
             .animals
             .iter()
             .find(|a| a.id == assignment.animal_id)
-            .context(format!("Animal {} not found in dataset", assignment.animal_id))?;
+            .context(format!(
+                "Animal {} not found in dataset",
+                assignment.animal_id
+            ))?;
 
         let indicator_values: Vec<f64> = config
             .selected_indicators
@@ -216,12 +220,12 @@ fn write_grouping_sheet_to(
 
 /// Write Sheet 2: Statistical test results
 fn write_statistics_sheet(workbook: &mut Workbook, result: &GroupingResult) -> Result<()> {
-    let mut sheet = workbook.add_worksheet();
+    let sheet = workbook.add_worksheet();
     sheet
         .set_name("统计结果")
         .context("Failed to set sheet name")?;
 
-    write_statistics_sheet_to(&mut sheet, result)
+    write_statistics_sheet_to(sheet, result)
 }
 
 /// Write statistics data to a specific worksheet
@@ -229,7 +233,6 @@ fn write_statistics_sheet_to(
     sheet: &mut rust_xlsxwriter::Worksheet,
     result: &GroupingResult,
 ) -> Result<()> {
-
     // Header row
     let header_format = Format::new().set_bold();
     sheet.write_string_with_format(0, 0, "指标名称", &header_format)?;
@@ -324,11 +327,11 @@ fn write_summary_sheet(
             .filter(|a| a.sex == Sex::Female)
             .count();
 
-        sheet.write_string(row, 0, &format!("组 {} 配置", group_id + 1))?;
+        sheet.write_string(row, 0, format!("组 {} 配置", group_id + 1))?;
         sheet.write_string(
             row,
             1,
-            &format!("{} 只 ({}雄 + {}雌)", group_animals.len(), males, females),
+            format!("{} 只 ({}雄 + {}雌)", group_animals.len(), males, females),
         )?;
         row += 1;
     }
@@ -360,7 +363,15 @@ fn write_summary_sheet(
     row += 1;
 
     sheet.write_string(row, 0, "是否满足要求")?;
-    sheet.write_string(row, 1, if result.summary.meets_criteria { "是" } else { "否" })?;
+    sheet.write_string(
+        row,
+        1,
+        if result.summary.meets_criteria {
+            "是"
+        } else {
+            "否"
+        },
+    )?;
     row += 1;
 
     sheet.write_string(row, 0, "计算耗时 (ms)")?;
@@ -374,10 +385,7 @@ fn write_summary_sheet(
 }
 
 /// Write comparison sheet for multiple candidates
-fn write_comparison_sheet(
-    workbook: &mut Workbook,
-    results: &MultiGroupingResult,
-) -> Result<()> {
+fn write_comparison_sheet(workbook: &mut Workbook, results: &MultiGroupingResult) -> Result<()> {
     let sheet = workbook.add_worksheet();
     sheet
         .set_name("方案对比")
@@ -409,7 +417,11 @@ fn write_comparison_sheet(
         sheet.write_string(
             excel_row,
             6,
-            if result.summary.meets_criteria { "是" } else { "否" },
+            if result.summary.meets_criteria {
+                "是"
+            } else {
+                "否"
+            },
         )?;
     }
 
@@ -582,6 +594,6 @@ mod tests {
 
         // Verify file exists
         assert!(std::path::Path::new(output_path).exists());
-        println!("Test export created at: {}", output_path);
+        println!("Test export created at: {output_path}");
     }
 }

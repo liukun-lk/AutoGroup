@@ -1,5 +1,5 @@
 use anyhow::Result;
-use statrs::distribution::{StudentsT, ContinuousCDF};
+use statrs::distribution::{ContinuousCDF, StudentsT};
 
 /// Dunnett's T3 test
 /// Post-hoc test for Welch ANOVA when variances are unequal
@@ -17,10 +17,7 @@ pub fn dunnett_t3(groups: &[Vec<f64>]) -> Result<Vec<(usize, usize, f64)>> {
         .map(|g| {
             let n = g.len() as f64;
             let mean = g.iter().sum::<f64>() / n;
-            let variance = g
-                .iter()
-                .map(|x| (x - mean).powi(2))
-                .sum::<f64>() / (n - 1.0);
+            let variance = g.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
             (mean, variance, g.len())
         })
         .collect();
@@ -82,7 +79,7 @@ mod tests {
         assert_eq!(results.len(), 3);
 
         for (i, j, p) in &results {
-            println!("Group {} vs {}: P = {}", i, j, p);
+            println!("Group {i} vs {j}: P = {p}");
         }
     }
 
@@ -99,7 +96,7 @@ mod tests {
 
         // All comparisons should show significant differences
         for (i, j, p) in &results {
-            println!("Group {} vs {}: P = {}", i, j, p);
+            println!("Group {i} vs {j}: P = {p}");
             assert!(*p < 0.01, "Should detect significant difference");
         }
     }

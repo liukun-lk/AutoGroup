@@ -17,9 +17,7 @@ pub fn levene_test(groups: &[Vec<f64>]) -> Result<f64> {
     let transformed_groups: Vec<Vec<f64>> = groups
         .iter()
         .zip(&means)
-        .map(|(group, mean)| {
-            group.iter().map(|&x| (x - mean).abs()).collect()
-        })
+        .map(|(group, mean)| group.iter().map(|&x| (x - mean).abs()).collect())
         .collect();
 
     // Step 3: Run ANOVA on transformed data
@@ -63,7 +61,7 @@ mod tests {
 
         let p = levene_test(&groups).unwrap();
         // Note: With only 3 samples, power is low, but should still show some difference
-        println!("Levene P-value for unequal variances: {}", p);
+        println!("Levene P-value for unequal variances: {p}");
     }
 
     #[test]

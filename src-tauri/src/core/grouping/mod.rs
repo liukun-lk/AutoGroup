@@ -67,8 +67,7 @@ pub fn compute_optimal_grouping(
     let top_candidates: Vec<GroupingResult> = valid_candidates
         .into_iter()
         .take(max_candidates)
-        .enumerate()
-        .map(|(_rank, mut result)| {
+        .map(|mut result| {
             // Set computation_time_ms for each candidate
             result.computation_time_ms = start_time.elapsed().as_millis() as u64;
             result

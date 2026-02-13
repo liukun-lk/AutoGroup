@@ -14,7 +14,7 @@ pub async fn export_result(
     };
 
     exporter::export_grouping_result(&result, &dataset, &sheet_config, &output_path)
-        .map_err(|e| format!("Export failed: {}", e))
+        .map_err(|e| format!("Export failed: {e}"))
 }
 
 #[tauri::command]
@@ -31,5 +31,5 @@ pub async fn export_multiple_results(
     };
 
     exporter::export_multiple_results(&multi_result, &dataset, &sheet_config, &output_path)
-        .map_err(|e| format!("Export failed: {}", e))
+        .map_err(|e| format!("Export failed: {e}"))
 }

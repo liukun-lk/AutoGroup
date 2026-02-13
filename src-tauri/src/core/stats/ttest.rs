@@ -6,7 +6,9 @@ use statrs::distribution::{ContinuousCDF, StudentsT};
 /// Returns P-value (two-tailed)
 pub fn student_ttest(group1: &[f64], group2: &[f64]) -> Result<f64> {
     if group1.len() < 2 || group2.len() < 2 {
-        return Err(anyhow::anyhow!("Each group must have at least 2 observations"));
+        return Err(anyhow::anyhow!(
+            "Each group must have at least 2 observations"
+        ));
     }
 
     let n1 = group1.len() as f64;
@@ -42,7 +44,9 @@ pub fn student_ttest(group1: &[f64], group2: &[f64]) -> Result<f64> {
 /// Returns P-value (two-tailed)
 pub fn welch_ttest(group1: &[f64], group2: &[f64]) -> Result<f64> {
     if group1.len() < 2 || group2.len() < 2 {
-        return Err(anyhow::anyhow!("Each group must have at least 2 observations"));
+        return Err(anyhow::anyhow!(
+            "Each group must have at least 2 observations"
+        ));
     }
 
     let n1 = group1.len() as f64;
@@ -84,7 +88,10 @@ mod tests {
         let group2 = vec![1.5, 2.5, 3.5, 4.5, 5.5];
 
         let p = student_ttest(&group1, &group2).unwrap();
-        assert!(p > 0.05, "P-value should be > 0.05 for similar distributions");
+        assert!(
+            p > 0.05,
+            "P-value should be > 0.05 for similar distributions"
+        );
     }
 
     #[test]
@@ -94,7 +101,10 @@ mod tests {
         let group2 = vec![10.0, 10.1, 10.2, 10.3, 10.4];
 
         let p = student_ttest(&group1, &group2).unwrap();
-        assert!(p < 0.001, "P-value should be < 0.001 for very different means");
+        assert!(
+            p < 0.001,
+            "P-value should be < 0.001 for very different means"
+        );
     }
 
     #[test]
@@ -103,7 +113,10 @@ mod tests {
         let group2 = vec![1.5, 2.5, 3.5, 4.5, 5.5];
 
         let p = welch_ttest(&group1, &group2).unwrap();
-        assert!(p > 0.05, "P-value should be > 0.05 for similar distributions");
+        assert!(
+            p > 0.05,
+            "P-value should be > 0.05 for similar distributions"
+        );
     }
 
     #[test]
@@ -112,7 +125,10 @@ mod tests {
         let group2 = vec![10.0, 10.1, 10.2, 10.3, 10.4];
 
         let p = welch_ttest(&group1, &group2).unwrap();
-        assert!(p < 0.001, "P-value should be < 0.001 for very different means");
+        assert!(
+            p < 0.001,
+            "P-value should be < 0.001 for very different means"
+        );
     }
 
     #[test]
@@ -124,7 +140,10 @@ mod tests {
         let p_student = student_ttest(&group1, &group2).unwrap();
         let p_welch = welch_ttest(&group1, &group2).unwrap();
 
-        println!("Student's t: {}, Welch's t: {}", p_student, p_welch);
-        assert!((p_student - p_welch).abs() < 0.1, "Results should be similar");
+        println!("Student's t: {p_student}, Welch's t: {p_welch}");
+        assert!(
+            (p_student - p_welch).abs() < 0.1,
+            "Results should be similar"
+        );
     }
 }

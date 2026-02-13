@@ -1,5 +1,5 @@
 mod commands;
-mod core;
+pub mod core;
 mod persistence;
 mod utils;
 

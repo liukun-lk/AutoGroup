@@ -1,5 +1,5 @@
 use anyhow::Result;
-use statrs::distribution::{FisherSnedecor, ContinuousCDF};
+use statrs::distribution::{ContinuousCDF, FisherSnedecor};
 
 /// One-way ANOVA (Analysis of Variance)
 /// Tests if means of multiple groups are significantly different
@@ -40,9 +40,7 @@ pub fn one_way_anova(groups: &[Vec<f64>]) -> Result<f64> {
     let ssw: f64 = groups
         .iter()
         .zip(&group_stats)
-        .map(|(group, (_, _, mean))| {
-            group.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
-        })
+        .map(|(group, (_, _, mean))| group.iter().map(|x| (x - mean).powi(2)).sum::<f64>())
         .sum();
 
     // Degrees of freedom
@@ -77,10 +75,7 @@ pub fn welch_anova(groups: &[Vec<f64>]) -> Result<f64> {
     for group in groups {
         let n = group.len() as f64;
         let mean = group.iter().sum::<f64>() / n;
-        let variance = group
-            .iter()
-            .map(|x| (x - mean).powi(2))
-            .sum::<f64>() / (n - 1.0);
+        let variance = group.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
         let weight = n / variance;
         group_stats.push((n, mean, variance, weight));
     }
@@ -90,13 +85,15 @@ pub fn welch_anova(groups: &[Vec<f64>]) -> Result<f64> {
     let grand_mean: f64 = group_stats
         .iter()
         .map(|(_, mean, _, w)| w * mean)
-        .sum::<f64>() / sum_weights;
+        .sum::<f64>()
+        / sum_weights;
 
     // Welch's F-statistic
     let numerator: f64 = group_stats
         .iter()
         .map(|(_, mean, _, w)| w * (mean - grand_mean).powi(2))
-        .sum::<f64>() / (k - 1.0);
+        .sum::<f64>()
+        / (k - 1.0);
 
     let h: f64 = group_stats
         .iter()

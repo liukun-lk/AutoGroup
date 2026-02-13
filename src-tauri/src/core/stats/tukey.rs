@@ -68,7 +68,7 @@ fn tukey_q_to_p(q_stat: f64, num_groups: usize, df: usize) -> f64 {
 
     // Use two-tailed t-distribution as approximation
     // This is conservative (tends to give higher P-values)
-    use statrs::distribution::{StudentsT, ContinuousCDF};
+    use statrs::distribution::{ContinuousCDF, StudentsT};
 
     let t_dist = StudentsT::new(0.0, 1.0, df as f64).unwrap();
     let p_one_tail = 1.0 - t_dist.cdf(t_approx);
@@ -98,7 +98,7 @@ mod tests {
 
         // All P-values should be relatively high
         for (i, j, p) in &results {
-            println!("Group {} vs {}: P = {}", i, j, p);
+            println!("Group {i} vs {j}: P = {p}");
             assert!(p > &0.05, "Expected high P-value for similar groups");
         }
     }
@@ -117,7 +117,7 @@ mod tests {
         // Comparisons involving group 2 should have low P-values
         for (i, j, p) in &results {
             if *i == 2 || *j == 2 {
-                println!("Group {} vs {}: P = {}", i, j, p);
+                println!("Group {i} vs {j}: P = {p}");
                 // Should detect difference
                 assert!(p < &0.05, "Should detect difference with outlier group");
             }

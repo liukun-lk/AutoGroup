@@ -20,7 +20,7 @@ mod export_integration_tests {
                 d
             }
             Err(e) => {
-                panic!("Failed to parse Excel: {}", e);
+                panic!("Failed to parse Excel: {e}");
             }
         };
 
@@ -60,27 +60,24 @@ mod export_integration_tests {
             max_candidates: 10,
         };
 
-        let multi_result = match grouping::compute_optimal_grouping(
-            dataset.clone(),
-            group_config,
-            stat_config,
-        ) {
-            Ok(r) => {
-                println!("✓ Grouping completed");
-                println!("  Candidates found: {}", r.candidates.len());
-                println!("  Total evaluated: {}", r.total_evaluated);
-                println!("  Total valid: {}", r.total_valid);
-                if let Some(best) = r.candidates.first() {
-                    println!("  Best - Min P-value: {:.6}", best.summary.min_p_value);
-                    println!("  Best - Mean P-value: {:.6}", best.summary.mean_p_value);
-                    println!("  Best - Meets criteria: {}", best.summary.meets_criteria);
+        let multi_result =
+            match grouping::compute_optimal_grouping(dataset.clone(), group_config, stat_config) {
+                Ok(r) => {
+                    println!("✓ Grouping completed");
+                    println!("  Candidates found: {}", r.candidates.len());
+                    println!("  Total evaluated: {}", r.total_evaluated);
+                    println!("  Total valid: {}", r.total_valid);
+                    if let Some(best) = r.candidates.first() {
+                        println!("  Best - Min P-value: {:.6}", best.summary.min_p_value);
+                        println!("  Best - Mean P-value: {:.6}", best.summary.mean_p_value);
+                        println!("  Best - Meets criteria: {}", best.summary.meets_criteria);
+                    }
+                    r
                 }
-                r
-            }
-            Err(e) => {
-                panic!("Grouping failed: {}", e);
-            }
-        };
+                Err(e) => {
+                    panic!("Grouping failed: {e}");
+                }
+            };
 
         println!("\n=== Step 3: Export to Excel ===");
 
@@ -90,18 +87,20 @@ mod export_integration_tests {
             include_summary: true,
         };
 
-        let output_path =
-            "/tmp/autogroup_export_test.xlsx";
+        let output_path = "/tmp/autogroup_export_test.xlsx";
 
         // Export best result only
-        let best_result = multi_result.candidates.first().expect("Should have at least one candidate");
+        let best_result = multi_result
+            .candidates
+            .first()
+            .expect("Should have at least one candidate");
         match exporter::export_grouping_result(best_result, &dataset, &sheet_config, output_path) {
             Ok(_) => {
                 println!("✓ Export successful");
-                println!("  File saved to: {}", output_path);
+                println!("  File saved to: {output_path}");
             }
             Err(e) => {
-                panic!("Export failed: {}", e);
+                panic!("Export failed: {e}");
             }
         }
 
@@ -112,13 +111,16 @@ mod export_integration_tests {
         );
 
         println!("\n=== Step 4: Verify Export Contents ===");
-        println!("✓ Excel file created with {} indicators", dataset.indicator_names.len());
+        println!(
+            "✓ Excel file created with {} indicators",
+            dataset.indicator_names.len()
+        );
         println!("✓ Grouping results exported");
         println!("✓ Statistical analysis included");
         println!("✓ Summary information included");
 
         println!("\n✅ End-to-end export test passed!");
-        println!("\n📁 Output file: {}", output_path);
+        println!("\n📁 Output file: {output_path}");
         println!("   You can open this file in Excel to verify the format");
         println!("\n=== Test Complete ===\n");
     }
@@ -163,23 +165,26 @@ mod export_integration_tests {
         };
 
         let multi_result =
-            grouping::compute_optimal_grouping(dataset.clone(), group_config, stat_config)
-                .unwrap();
+            grouping::compute_optimal_grouping(dataset.clone(), group_config, stat_config).unwrap();
 
         let sheet_config = exporter::SheetConfig {
-            selected_indicators: selected_indicators, // Only export 5 indicators
+            selected_indicators, // Only export 5 indicators
             include_statistics: true,
             include_summary: true,
         };
 
         let output_path = "/tmp/autogroup_export_selected.xlsx";
 
-        let best_result = multi_result.candidates.first().expect("Should have at least one candidate");
-        exporter::export_grouping_result(best_result, &dataset, &sheet_config, output_path).unwrap();
+        let best_result = multi_result
+            .candidates
+            .first()
+            .expect("Should have at least one candidate");
+        exporter::export_grouping_result(best_result, &dataset, &sheet_config, output_path)
+            .unwrap();
 
         assert!(std::path::Path::new(output_path).exists());
 
         println!("\n✓ Exported file with selected indicators only");
-        println!("  File: {}", output_path);
+        println!("  File: {output_path}");
     }
 }

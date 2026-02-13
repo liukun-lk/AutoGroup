@@ -1,11 +1,11 @@
 use super::models::*;
 use anyhow::{anyhow, Context, Result};
-use calamine::{open_workbook, DataType, Reader, Xlsx};
+use calamine::{open_workbook, Data, DataType, Reader, Xlsx};
 use std::collections::HashMap;
 
 pub fn parse_excel_file(path: &str) -> Result<Dataset> {
-    let mut workbook: Xlsx<_> = open_workbook(path)
-        .with_context(|| format!("Failed to open Excel file: {}", path))?;
+    let mut workbook: Xlsx<_> =
+        open_workbook(path).with_context(|| format!("Failed to open Excel file: {path}"))?;
 
     // Get first sheet (原始数据)
     let sheet_names = workbook.sheet_names().to_vec();
@@ -16,7 +16,7 @@ pub fn parse_excel_file(path: &str) -> Result<Dataset> {
     let first_sheet_name = sheet_names[0].clone();
     let range = workbook
         .worksheet_range(&first_sheet_name)
-        .with_context(|| format!("Failed to read sheet: {}", first_sheet_name))?;
+        .with_context(|| format!("Failed to read sheet: {first_sheet_name}"))?;
 
     // Collect all rows
     let mut rows = Vec::new();
@@ -30,53 +30,56 @@ pub fn parse_excel_file(path: &str) -> Result<Dataset> {
         ));
     }
 
-    // Parse dual-row header
-    // Row 0: English names (or units/empty)
-    // Row 1: Chinese names + units
-    let row0 = &rows[0];
-    let row1 = &rows[1];
+    // Detect which row contains the actual header
+    // Header row typically has keywords like "动物编号", "性别", "AnimalID", "Sex"
+    let header_row_idx = detect_header_row(&rows)?;
+
+    // Parse header rows for indicator names
+    // Support both single-row and dual-row headers
+    // - Dual-row header: Row N-1 has short names/units, Row N has Chinese names/units
+    // - Single-row header: Only Row N has indicator names, Row N-1 may have units
+    let prev_row = if header_row_idx > 0 {
+        Some(&rows[header_row_idx - 1])
+    } else {
+        None
+    };
+    let header_row = &rows[header_row_idx];
 
     let mut indicator_names: Vec<String> = Vec::new();
     let mut indicator_metadata: Vec<IndicatorMetadata> = Vec::new();
 
+    let max_cols = header_row.len();
+
     // Start from column 2 (skip AnimalID and Sex columns)
-    let max_cols = row0.len().max(row1.len());
-
     for col_idx in 2..max_cols {
-        let row0_val = row0.get(col_idx).and_then(|c| c.get_string()).unwrap_or("");
-        let row1_val = row1.get(col_idx).and_then(|c| c.get_string()).unwrap_or("");
+        let header_val = header_row
+            .get(col_idx)
+            .and_then(|c| c.get_string())
+            .unwrap_or("");
+        let prev_val = prev_row
+            .and_then(|row| row.get(col_idx))
+            .and_then(|c| c.get_string())
+            .unwrap_or("");
 
-        let row0_trimmed = row0_val.trim();
-        let row1_trimmed = row1_val.trim();
+        let header_trimmed = header_val.trim();
+        let prev_trimmed = prev_val.trim();
 
-        // Skip if both rows are empty
-        if row0_trimmed.is_empty() && row1_trimmed.is_empty() {
+        // Skip if header is empty
+        if header_trimmed.is_empty() {
             continue;
         }
 
-        // Determine key, display_name, and unit
-        let (key, display_name, unit) = parse_indicator_metadata(row0_trimmed, row1_trimmed);
+        // Determine key, display_name, and unit from dual-row header
+        let (key, display_name, unit) = parse_dual_row_header(prev_trimmed, header_trimmed);
 
         indicator_names.push(key.clone());
         indicator_metadata.push(IndicatorMetadata::new(key, display_name, unit));
     }
 
-    // Determine data start row
-    let start_row = if rows.len() > 2 {
-        // Check if row 2 is data or additional header
-        let first_cell = &rows[2][0];
-        if let Some(s) = first_cell.get_string() {
-            if s.starts_with("XHP") || s.len() > 5 {
-                2 // Row 2 is data
-            } else {
-                3 // Row 2 is additional header, skip it
-            }
-        } else {
-            3
-        }
-    } else {
-        2
-    };
+    // Determine data start row by detecting header row pattern
+    // Header row typically contains text like "动物编号", "性别", "AnimalID", "Sex"
+    // Data row contains numeric/specific values
+    let start_row = detect_data_start_row(&rows)?;
 
     let mut animals = Vec::new();
 
@@ -85,15 +88,27 @@ pub fn parse_excel_file(path: &str) -> Result<Dataset> {
             continue;
         }
 
-        // Column 0: AnimalID
-        let animal_id = match row[0].get_string() {
-            Some(s) => s.trim().to_string(),
-            None => continue,
+        // Column 0: AnimalID (support both string and numeric formats)
+        let animal_id = match &row[0] {
+            Data::String(s) => {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                trimmed.to_string()
+            }
+            Data::Int(i) => i.to_string(),
+            Data::Float(f) => {
+                // Format as integer if it's a whole number, otherwise with decimals
+                if f.fract() == 0.0 {
+                    format!("{f:.0}")
+                } else {
+                    f.to_string()
+                }
+            }
+            Data::Empty => continue,
+            _ => continue,
         };
-
-        if animal_id.is_empty() {
-            continue;
-        }
 
         // Column 1: Sex
         let sex = match row[1].get_string() {
@@ -150,100 +165,18 @@ pub fn parse_excel_file(path: &str) -> Result<Dataset> {
     })
 }
 
-/// Parse indicator metadata from dual-row header
-/// Returns: (key, display_name, unit)
-///
-/// The original data has a complex structure:
-/// - Row 1 (Row 0 in code): Mix of English names/units (kg, ℃, ALT, AST, TP...)
-/// - Row 2 (Row 1 in code): Mix of Chinese names/units (体重, 肛温, U/L, g/L...)
-///
-/// Pattern recognition:
-/// - If Row 1 is a short name (kg, ℃) and Row 2 is Chinese -> Row 2 is display name
-/// - If Row 1 is uppercase English (ALT, AST) and Row 2 is unit (U/L) -> Row 1 is display name, Row 2 is unit
-fn parse_indicator_metadata(row0: &str, row1: &str) -> (String, String, String) {
-    // Both empty shouldn't happen due to caller's check
-    if row0.is_empty() && row1.is_empty() {
-        return ("Unknown".to_string(), "Unknown".to_string(), String::new());
-    }
-
-    // Case 1: Row 0 is clearly a unit (kg, ℃), Row 1 should be Chinese name
-    if is_simple_unit(row0) {
-        let unit = row0.to_string();
-        if !row1.is_empty() && is_chinese_name(row1) {
-            // e.g., Row0="kg", Row1="体重" -> key="kg", display="体重", unit="kg"
-            return (row0.to_string(), row1.to_string(), unit);
-        } else {
-            // e.g., Row0="kg", Row1=empty -> key="kg", display="kg", unit="kg"
-            return (row0.to_string(), row0.to_string(), unit);
-        }
-    }
-
-    // Case 2: Row 0 is English indicator name (ALT, AST, WBC...)
-    if is_english_indicator_name(row0) {
-        let key = row0.to_string();
-        // Row 1 is likely a unit
-        let unit = if is_unit_string(row1) {
-            row1.to_string()
-        } else {
-            String::new()
-        };
-        // Use English name as display (no Chinese available)
-        return (key.clone(), key, unit);
-    }
-
-    // Case 3: Row 0 is empty/unit, Row 1 has content
-    if row0.is_empty() || is_unit_string(row0) {
-        let unit = if is_unit_string(row0) {
-            row0.to_string()
-        } else if is_unit_string(row1) {
-            row1.to_string()
-        } else {
-            String::new()
-        };
-
-        // Use Row 1 as both key and display
-        return (row1.to_string(), row1.to_string(), unit);
-    }
-
-    // Fallback: Use Row 0 as key and display
-    let unit = if is_unit_string(row1) {
-        row1.to_string()
-    } else {
-        String::new()
-    };
-    (row0.to_string(), row0.to_string(), unit)
-}
-
-/// Check if string is a simple unit (kg, ℃, etc.)
-fn is_simple_unit(s: &str) -> bool {
-    matches!(s, "kg" | "℃" | "°C")
-}
-
-/// Check if string is a Chinese name (contains Chinese characters)
-fn is_chinese_name(s: &str) -> bool {
-    s.chars().any(|c| {
-        let code = c as u32;
-        code >= 0x4E00 && code <= 0x9FFF
-    })
-}
-
-/// Check if string is an English indicator name (uppercase letters, possibly with numbers)
-fn is_english_indicator_name(s: &str) -> bool {
-    !s.is_empty() &&
-    s.len() >= 2 &&
-    s.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '-' || c == '#' || c == '%')
-}
-
 /// Check if string is a unit (contains /, parentheses, or common unit patterns)
 fn is_unit_string(s: &str) -> bool {
-    !s.is_empty() && (
-        s.contains('/') ||
-        s.contains('(') ||
-        s.contains("mol") ||
-        s.contains("^") ||
-        s == "kg" ||
-        s == "℃"
-    )
+    !s.is_empty()
+        && (s.contains('/')
+            || s.contains('(')
+            || s.contains("mol")
+            || s.contains('^')
+            || s == "kg"
+            || s == "℃"
+            || s == "U"
+            || s == "g"
+            || s == "L")
 }
 
 // The following functions are currently unused but kept for potential future use
@@ -264,7 +197,9 @@ fn is_chinese_or_indicator_name(s: &str) -> bool {
         code > 0x4E00 && code < 0x9FFF
     });
 
-    let is_indicator = s.len() > 2 && s.chars().all(|c| c.is_ascii_uppercase() || c == '#' || c == '%' || c == '-');
+    let is_indicator = s.len() > 2
+        && s.chars()
+            .all(|c| c.is_ascii_uppercase() || c == '#' || c == '%' || c == '-');
 
     has_chinese || is_indicator
 }
@@ -289,4 +224,169 @@ fn extract_unit_from_text(text: &str) -> String {
         // No recognizable unit
         String::new()
     }
+}
+
+/// Detect the row where actual data starts (after headers)
+///
+/// Strategy: Find the row containing column headers (e.g., "动物编号", "AnimalID", "Sex")
+/// Data starts immediately after this header row
+///
+/// Returns the row index where data begins
+fn detect_data_start_row(rows: &[Vec<Data>]) -> Result<usize> {
+    let header_row_idx = detect_header_row(rows)?;
+    let data_row = header_row_idx + 1;
+
+    if data_row >= rows.len() {
+        return Err(anyhow!("No data rows found after header"));
+    }
+
+    Ok(data_row)
+}
+
+/// Detect which row contains the column headers
+///
+/// Header row typically contains keywords like "动物编号", "性别", "AnimalID", "Sex"
+///
+/// Returns the row index of the header
+fn detect_header_row(rows: &[Vec<Data>]) -> Result<usize> {
+    if rows.len() < 2 {
+        return Err(anyhow!("Excel file must have at least 2 rows"));
+    }
+
+    // Look for header row by detecting common header keywords
+    let header_keywords = ["动物编号", "性别", "AnimalID", "Sex", "Animal", "ID"];
+
+    for (row_idx, row) in rows.iter().enumerate() {
+        if row.is_empty() {
+            continue;
+        }
+
+        // Check first two columns for header keywords
+        let has_header_pattern = row.iter().take(2).any(|cell| {
+            if let Some(s) = cell.get_string() {
+                let lower = s.to_lowercase();
+                header_keywords
+                    .iter()
+                    .any(|kw| lower.contains(&kw.to_lowercase()))
+            } else {
+                false
+            }
+        });
+
+        if has_header_pattern {
+            return Ok(row_idx);
+        }
+    }
+
+    // Fallback: If no header detected, assume row 1 is header
+    if rows.len() > 1 {
+        Ok(1)
+    } else {
+        Err(anyhow!("Cannot determine header row"))
+    }
+}
+
+/// Parse indicator metadata from dual-row header
+///
+/// The original data format has a complex dual-row header structure:
+/// - Row N-1: May contain English names, units (kg, ℃), or indicator abbreviations (ALT, AST)
+/// - Row N: May contain Chinese names, units (U/L, g/L), or empty
+///
+/// Returns: (key, display_name, unit)
+///
+/// Priority for key selection:
+/// 1. If Row N-1 has meaningful name (not just unit), use it
+/// 2. Otherwise use Row N
+///
+/// Priority for display_name:
+/// 1. Prefer Chinese name if available
+/// 2. Otherwise use English name or abbreviation
+///
+/// Unit extraction:
+/// - Detect common unit patterns (/, parentheses, mol, kg, ℃, etc.)
+fn parse_dual_row_header(prev_row_val: &str, curr_row_val: &str) -> (String, String, String) {
+    // Both empty shouldn't happen due to caller's check on curr_row_val
+    if prev_row_val.is_empty() && curr_row_val.is_empty() {
+        return ("Unknown".to_string(), "Unknown".to_string(), String::new());
+    }
+
+    let prev_is_unit = is_unit_string(prev_row_val);
+    let prev_is_simple = is_simple_name(prev_row_val);
+    let _prev_is_chinese = has_chinese_chars(prev_row_val);
+
+    let curr_is_unit = is_unit_string(curr_row_val);
+    let curr_is_chinese = has_chinese_chars(curr_row_val);
+
+    // Case 1: prev_row has simple name (kg, ℃), curr_row has Chinese name (体重, 肛温)
+    // Result: key="kg", display="体重", unit="kg"
+    if prev_is_simple && curr_is_chinese && !curr_is_unit {
+        return (
+            prev_row_val.to_string(),
+            curr_row_val.to_string(),
+            prev_row_val.to_string(),
+        );
+    }
+
+    // Case 2: prev_row has indicator name (ALT, AST), curr_row has unit (U/L)
+    // Result: key="ALT", display="ALT", unit="U/L"
+    if !prev_is_unit && !prev_is_simple && curr_is_unit {
+        return (
+            prev_row_val.to_string(),
+            prev_row_val.to_string(),
+            curr_row_val.to_string(),
+        );
+    }
+
+    // Case 3: prev_row is unit (U), curr_row has indicator name (ALT, AST)
+    // Result: key="ALT", display="ALT", unit="U"
+    if prev_is_unit && !curr_is_unit {
+        return (
+            curr_row_val.to_string(),
+            curr_row_val.to_string(),
+            prev_row_val.to_string(),
+        );
+    }
+
+    // Case 4: Both rows have content, neither is clear unit
+    // Prefer Chinese for display if available
+    if curr_is_chinese {
+        let unit = if prev_is_unit {
+            prev_row_val.to_string()
+        } else {
+            String::new()
+        };
+        return (curr_row_val.to_string(), curr_row_val.to_string(), unit);
+    }
+
+    // Case 5: prev_row has content, use it as both key and display
+    if !prev_row_val.is_empty() {
+        let unit = if curr_is_unit {
+            curr_row_val.to_string()
+        } else if prev_is_unit {
+            prev_row_val.to_string()
+        } else {
+            String::new()
+        };
+        return (prev_row_val.to_string(), prev_row_val.to_string(), unit);
+    }
+
+    // Fallback: use curr_row as key and display
+    (
+        curr_row_val.to_string(),
+        curr_row_val.to_string(),
+        String::new(),
+    )
+}
+
+/// Check if string is a simple short name (kg, ℃, etc.)
+fn is_simple_name(s: &str) -> bool {
+    s.len() <= 3 && (s == "kg" || s == "℃" || s == "°C" || s == "cm" || s == "g")
+}
+
+/// Check if string contains Chinese characters
+fn has_chinese_chars(s: &str) -> bool {
+    s.chars().any(|c| {
+        let code = c as u32;
+        (0x4E00..=0x9FFF).contains(&code)
+    })
 }
