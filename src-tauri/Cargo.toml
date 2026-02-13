@@ -52,3 +52,6 @@ uuid = { version = "1.11", features = ["v4", "serde"] }
 # Excel export
 rust_xlsxwriter = "0.83"
 
+# Clipboard
+arboard = "3"
+

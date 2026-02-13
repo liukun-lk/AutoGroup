@@ -1,7 +1,9 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import type { DragDropEvent } from "@tauri-apps/api/webview";
 import { datasetAtom, currentStepAtom, clearErrorAtom } from "@/stores";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,6 +17,29 @@ export function UploadPage() {
   const [, clearError] = useAtom(clearErrorAtom);
   const [isLoading, setIsLoading] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [dragFileValid, setDragFileValid] = useState<boolean | null>(null);
+
+  const isExcelFile = (path: string) => /\.(xlsx|xls)$/i.test(path);
+
+  const handleFileParse = useCallback(async (filePath: string) => {
+    try {
+      setIsLoading(true);
+      clearError();
+      setLocalError(null);
+
+      // Parse Excel file via Tauri
+      const result = await invoke<Dataset>("parse_excel", { filePath });
+
+      setDataset(result);
+      setCurrentStep("configure");
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      setLocalError(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [setDataset, setCurrentStep, clearError]);
 
   const handleFileSelect = useCallback(async () => {
     try {
@@ -37,19 +62,111 @@ export function UploadPage() {
       }
 
       const filePath = typeof selected === 'string' ? selected : (selected as { path: string }).path;
-
-      // Parse Excel file via Tauri
-      const result = await invoke<Dataset>("parse_excel", { filePath });
-
-      setDataset(result);
-      setCurrentStep("configure");
+      await handleFileParse(filePath);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       setLocalError(errorMessage);
-    } finally {
       setIsLoading(false);
     }
-  }, [setDataset, setCurrentStep, clearError]);
+  }, [clearError, handleFileParse]);
+
+  // Setup drag-drop listener
+  useEffect(() => {
+    let unlistenFn: (() => void) | null = null;
+
+    const setupDragDrop = async () => {
+      try {
+        const appWindow = getCurrentWindow();
+        unlistenFn = await appWindow.onDragDropEvent((event) => {
+          const dragEvent = event.payload as DragDropEvent;
+
+          if (dragEvent.type === 'over' || dragEvent.type === 'enter') {
+            setIsDragOver(true);
+            const path = dragEvent.paths?.[0];
+            if (path) {
+              setDragFileValid(isExcelFile(path));
+            }
+            return;
+          }
+
+          if (dragEvent.type === 'leave') {
+            setIsDragOver(false);
+            setDragFileValid(null);
+            return;
+          }
+
+          if (dragEvent.type === 'drop') {
+            setIsDragOver(false);
+            setDragFileValid(null);
+
+            const paths = dragEvent.paths;
+            if (!paths || paths.length === 0 || isLoading) {
+              return;
+            }
+
+            const filePath = paths[0];
+            if (isExcelFile(filePath)) {
+              handleFileParse(filePath);
+            } else {
+              setLocalError("请上传 .xlsx 或 .xls 格式的文件");
+            }
+          }
+        });
+      } catch (err) {
+        console.error("Failed to setup drag-drop listener:", err);
+      }
+    };
+
+    setupDragDrop();
+
+    return () => {
+      unlistenFn?.();
+    };
+  }, [isLoading, handleFileParse]);
+
+  // Setup clipboard paste listener
+  useEffect(() => {
+    const handlePaste = async (e: ClipboardEvent) => {
+      e.preventDefault();
+
+      if (isLoading) {
+        return;
+      }
+
+      try {
+        setIsLoading(true);
+        clearError();
+        setLocalError(null);
+
+        // Call Rust command to get file paths from clipboard
+        const paths = await invoke<string[]>("parse_clipboard_files");
+
+        if (paths.length === 0) {
+          setLocalError("剪贴板中没有文件");
+          setIsLoading(false);
+          return;
+        }
+
+        const filePath = paths[0];
+        if (isExcelFile(filePath)) {
+          await handleFileParse(filePath);
+        } else {
+          setLocalError("剪贴板中的文件不是 .xlsx 或 .xls 格式");
+          setIsLoading(false);
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        setLocalError(`粘贴失败: ${errorMessage}`);
+        setIsLoading(false);
+      }
+    };
+
+    document.addEventListener("paste", handlePaste);
+
+    return () => {
+      document.removeEventListener("paste", handlePaste);
+    };
+  }, [isLoading, clearError, handleFileParse]);
 
   return (
     <div className="container max-w-4xl mx-auto py-8">
@@ -69,20 +186,57 @@ export function UploadPage() {
           )}
 
           {/* Upload Button */}
-          <div className="flex flex-col items-center justify-center py-12 border-2 border-dashed rounded-lg bg-muted/50">
-            <Upload className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">选择 Excel 文件</h3>
-            <p className="text-sm text-muted-foreground mb-6 text-center max-w-sm">
-              文件应包含"原始数据" sheet，格式参考测试数据
-            </p>
-            <Button
-              onClick={handleFileSelect}
-              disabled={isLoading}
-              size="lg"
-            >
-              <FileSpreadsheet className="mr-2 h-4 w-4" />
-              {isLoading ? "解析中..." : "选择文件"}
-            </Button>
+          <div
+            className={`
+              border-2 border-dashed rounded-lg py-12 transition-all
+              ${isDragOver && dragFileValid === true
+                ? 'border-green-500 bg-green-50 dark:bg-green-950/30'
+                : isDragOver && dragFileValid === false
+                  ? 'border-red-500 bg-red-50 dark:bg-red-950/30'
+                  : 'border-border bg-muted/50'
+              }
+            `}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => e.preventDefault()}
+          >
+            <div className="flex flex-col items-center justify-center">
+              <Upload className="h-12 w-12 text-muted-foreground mb-4" />
+
+              {isDragOver && dragFileValid === true && (
+                <h3 className="text-lg font-semibold mb-2 text-green-700 dark:text-green-400">
+                  ✅ 松开以上传 Excel 文件
+                </h3>
+              )}
+
+              {isDragOver && dragFileValid === false && (
+                <h3 className="text-lg font-semibold mb-2 text-red-700 dark:text-red-400">
+                  ❌ 仅支持 .xlsx 或 .xls 文件
+                </h3>
+              )}
+
+              {!isDragOver && (
+                <>
+                  <h3 className="text-lg font-semibold mb-2">选择 Excel 文件</h3>
+                  <p className="text-sm text-muted-foreground mb-4 text-center max-w-sm">
+                    文件应包含"原始数据" sheet，格式参考测试数据
+                  </p>
+                  <p className="text-xs text-muted-foreground mb-6 text-center max-w-md">
+                    支持拖拽文件到此区域，或按 Cmd+V / Ctrl+V 粘贴已复制的文件
+                  </p>
+                </>
+              )}
+
+              {!isDragOver && (
+                <Button
+                  onClick={handleFileSelect}
+                  disabled={isLoading}
+                  size="lg"
+                >
+                  <FileSpreadsheet className="mr-2 h-4 w-4" />
+                  {isLoading ? "解析中..." : "选择文件"}
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* Dataset Info */}

@@ -15,6 +15,7 @@ pub fn run() {
             grouping::compute_grouping,
             export::export_result,
             export::export_multiple_results,
+            clipboard::parse_clipboard_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
