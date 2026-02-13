@@ -25,7 +25,7 @@ export function UploadPage() {
 
   const handleFileParse = useCallback(async (filePath: string) => {
     try {
-      resetState(null);
+      resetState();
       setIsLoading(true);
       clearError();
       setLocalError(null);
@@ -84,9 +84,11 @@ export function UploadPage() {
 
           if (dragEvent.type === 'over' || dragEvent.type === 'enter') {
             setIsDragOver(true);
-            const path = dragEvent.paths?.[0];
-            if (path) {
-              setDragFileValid(isExcelFile(path));
+            if (dragEvent.type === 'enter') {
+              const path = dragEvent.paths?.[0];
+              if (path) {
+                setDragFileValid(isExcelFile(path));
+              }
             }
             return;
           }

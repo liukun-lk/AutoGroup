@@ -34,11 +34,25 @@ export function ConfigurePage() {
   const [reserveMaleCount, setReserveMaleCount] = useState(0);
   const [reserveFemaleCount, setReserveFemaleCount] = useState(0);
 
+  // Track which field user is actively controlling (for linkage logic)
+  const [lastEditedField, setLastEditedField] = useState<"groups" | "animals">("groups");
+
   // Dynamic sex constraints array (for experimental groups only)
   const [sexConstraints, setSexConstraints] = useState<SexConstraint[]>([]);
 
   // Track if default indicators have been initialized
   const [defaultsInitialized, setDefaultsInitialized] = useState(false);
+
+  // Calculate available animals for experimental groups
+  const availableAnimals = dataset
+    ? dataset.metadata.total_animals - reserveMaleCount - reserveFemaleCount
+    : 0;
+
+  // Calculate configuration status
+  const requiredAnimals = numGroups * animalsPerGroup;
+  const surplus = availableAnimals - requiredAnimals;
+  const hasConflict = surplus !== 0;
+  const canDivideEvenly = availableAnimals % numGroups === 0;
 
   // Initialize default selected indicators (only once per dataset)
   useEffect(() => {
@@ -86,6 +100,27 @@ export function ConfigurePage() {
     setSexConstraints(initialConstraints);
   }, [numGroups, dataset, reserveMaleCount, reserveFemaleCount]);
 
+  // Linkage effect: auto-adjust based on last edited field
+  useEffect(() => {
+    if (!dataset || availableAnimals <= 0) return;
+
+    if (lastEditedField === "groups") {
+      // User edited numGroups -> auto-adjust animalsPerGroup
+      const suggested = Math.floor(availableAnimals / numGroups);
+      if (suggested > 0 && suggested !== animalsPerGroup) {
+        setAnimalsPerGroup(suggested);
+      }
+    } else {
+      // User edited animalsPerGroup -> auto-adjust numGroups
+      const suggested = animalsPerGroup > 0
+        ? Math.floor(availableAnimals / animalsPerGroup)
+        : 2;
+      if (suggested >= 2 && suggested !== numGroups) {
+        setNumGroups(Math.min(suggested, 5)); // Cap at 5 groups
+      }
+    }
+  }, [numGroups, animalsPerGroup, availableAnimals, dataset, lastEditedField]);
+
   // Update individual sex constraint
   const updateSexConstraint = (groupIndex: number, field: 'male_count' | 'female_count', value: number) => {
     setSexConstraints(prev =>
@@ -93,6 +128,29 @@ export function ConfigurePage() {
         i === groupIndex ? { ...constraint, [field]: value } : constraint
       )
     );
+  };
+
+  // Handle numGroups change with linkage tracking
+  const handleNumGroupsChange = (value: number) => {
+    setLastEditedField("groups");
+    setNumGroups(value);
+  };
+
+  // Handle animalsPerGroup change with linkage tracking
+  const handleAnimalsPerGroupChange = (value: number) => {
+    setLastEditedField("animals");
+    setAnimalsPerGroup(value);
+  };
+
+  // Handle reserve count changes
+  const handleReserveMaleChange = (value: number) => {
+    setReserveMaleCount(value);
+    // Trigger re-calculation based on last edited field
+  };
+
+  const handleReserveFemaleChange = (value: number) => {
+    setReserveFemaleCount(value);
+    // Trigger re-calculation based on last edited field
   };
 
   const handleBack = () => {
@@ -117,13 +175,35 @@ export function ConfigurePage() {
       },
     ];
 
+    // Determine group size configuration based on whether distribution is even
+    let animalGroupSize: { type: "Uniform"; value: number } | { type: "Custom"; values: number[] };
+
+    if (canDivideEvenly && surplus === 0) {
+      // Even distribution: use Uniform
+      animalGroupSize = {
+        type: "Uniform",
+        value: animalsPerGroup,
+      };
+    } else {
+      // Uneven distribution: construct Custom allocation
+      const baseSize = Math.floor(availableAnimals / numGroups);
+      const remainder = availableAnimals % numGroups;
+
+      // Distribute remainder to last groups
+      const customSizes = Array.from({ length: numGroups }, (_, i) =>
+        i >= numGroups - remainder ? baseSize + 1 : baseSize
+      );
+
+      animalGroupSize = {
+        type: "Custom",
+        values: customSizes,
+      };
+    }
+
     // Build group config using complete constraints
     const groupConfig: GroupConfig = {
       num_groups: numGroups + 1, // Include reserve group
-      animals_per_group: {
-        type: "Uniform",
-        value: animalsPerGroup,
-      },
+      animals_per_group: animalGroupSize,
       sex_constraints: allConstraints,
     };
 
@@ -150,6 +230,9 @@ export function ConfigurePage() {
     setGroupConfig,
     setStatConfig,
     setCurrentStep,
+    canDivideEvenly,
+    surplus,
+    availableAnimals,
   ]);
 
   const toggleIndicator = (indicator: string) => {
@@ -214,7 +297,7 @@ export function ConfigurePage() {
               <Input
                 type="number"
                 value={numGroups}
-                onChange={(e) => setNumGroups(Number(e.target.value))}
+                onChange={(e) => handleNumGroupsChange(Number(e.target.value))}
                 min={2}
                 max={5}
               />
@@ -224,11 +307,82 @@ export function ConfigurePage() {
               <Input
                 type="number"
                 value={animalsPerGroup}
-                onChange={(e) => setAnimalsPerGroup(Number(e.target.value))}
+                onChange={(e) => handleAnimalsPerGroupChange(Number(e.target.value))}
                 min={2}
               />
             </div>
           </div>
+
+          {/* Configuration Status Display */}
+          <div className="bg-muted/50 rounded-lg p-4 space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">实验组可用动物数:</span>
+              <span className="font-semibold">{availableAnimals} 只</span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">当前配置需要:</span>
+              <span className="font-semibold">{requiredAnimals} 只</span>
+            </div>
+            {!canDivideEvenly && surplus === 0 && (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">分配方案:</span>
+                <span className="font-semibold text-amber-600">
+                  {Array.from({ length: numGroups }, (_, i) => {
+                    const baseSize = Math.floor(availableAnimals / numGroups);
+                    const remainder = availableAnimals % numGroups;
+                    return i >= numGroups - remainder ? baseSize + 1 : baseSize;
+                  }).join(" + ")} 只/组
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Smart Suggestions */}
+          {hasConflict && (
+            <Alert variant={surplus > 0 ? "default" : "destructive"}>
+              <Info className="h-4 w-4" />
+              <AlertDescription>
+                {surplus > 0 ? (
+                  <div className="space-y-1">
+                    <div className="font-medium">配置提示</div>
+                    <div className="text-sm">
+                      当前配置将剩余 <strong>{surplus}</strong> 只动物。
+                      建议设置备用组 <strong>{surplus}</strong> 只，或调整分组参数。
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <div className="font-medium">配置错误</div>
+                    <div className="text-sm">
+                      当前配置需要 <strong>{requiredAnimals}</strong> 只动物，
+                      但实际只有 <strong>{availableAnimals}</strong> 只可用。
+                      请调整分组参数。
+                    </div>
+                  </div>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {!canDivideEvenly && surplus === 0 && (
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription>
+                <div className="space-y-1">
+                  <div className="font-medium">不均等分组提示</div>
+                  <div className="text-sm">
+                    当前配置无法均等分组，将采用不均等方案。
+                    {reserveMaleCount + reserveFemaleCount === 0 && (
+                      <span className="block mt-1">
+                        建议设置备用组 <strong>{availableAnimals % numGroups}</strong> 只，
+                        使实验组能够均等分配为 <strong>{Math.floor(availableAnimals / numGroups)}</strong> 只/组。
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
 
           {/* Sex Constraints */}
           <div>
@@ -243,6 +397,9 @@ export function ConfigurePage() {
                       (不参与统计)
                     </span>
                   </CardTitle>
+                  <CardDescription className="text-xs">
+                    实验组可用: <strong className="text-foreground">{availableAnimals}</strong> 只
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="space-y-2">
@@ -250,7 +407,7 @@ export function ConfigurePage() {
                     <Input
                       type="number"
                       value={reserveMaleCount}
-                      onChange={(e) => setReserveMaleCount(Number(e.target.value))}
+                      onChange={(e) => handleReserveMaleChange(Number(e.target.value))}
                       min={0}
                       max={dataset.metadata.male_count}
                     />
@@ -260,7 +417,7 @@ export function ConfigurePage() {
                     <Input
                       type="number"
                       value={reserveFemaleCount}
-                      onChange={(e) => setReserveFemaleCount(Number(e.target.value))}
+                      onChange={(e) => handleReserveFemaleChange(Number(e.target.value))}
                       min={0}
                       max={dataset.metadata.female_count}
                     />
