@@ -403,7 +403,10 @@ export function ConfigurePage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="space-y-2">
-                    <Label className="text-xs">雄性数量</Label>
+                    <Label className="text-xs flex items-center gap-1.5">
+                      <span className="text-blue-600 font-semibold text-base">♂</span>
+                      雄性数量
+                    </Label>
                     <Input
                       type="number"
                       value={reserveMaleCount}
@@ -413,7 +416,10 @@ export function ConfigurePage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label className="text-xs">雌性数量</Label>
+                    <Label className="text-xs flex items-center gap-1.5">
+                      <span className="text-pink-600 font-semibold text-base">♀</span>
+                      雌性数量
+                    </Label>
                     <Input
                       type="number"
                       value={reserveFemaleCount}
@@ -436,7 +442,10 @@ export function ConfigurePage() {
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="space-y-2">
-                      <Label className="text-xs">雄性数量</Label>
+                      <Label className="text-xs flex items-center gap-1.5">
+                        <span className="text-blue-600 font-semibold text-base">♂</span>
+                        雄性数量
+                      </Label>
                       <Input
                         type="number"
                         value={constraint.male_count}
@@ -445,7 +454,10 @@ export function ConfigurePage() {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label className="text-xs">雌性数量</Label>
+                      <Label className="text-xs flex items-center gap-1.5">
+                        <span className="text-pink-600 font-semibold text-base">♀</span>
+                        雌性数量
+                      </Label>
                       <Input
                         type="number"
                         value={constraint.female_count}
