@@ -227,17 +227,57 @@ fn write_grouping_sheet_to(
         sheet.write_string_with_format(1, (col_idx + 3) as u16, display_name, &header_format)?;
     }
 
-    // Row 2+: Data rows
-    for (row_idx, row) in export_rows.iter().enumerate() {
-        let excel_row = (row_idx + 2) as u32; // Data starts from Row 2
+    // Group rows by group_id for statistics calculation
+    use std::collections::BTreeMap;
+    let mut groups_data: BTreeMap<(usize, bool), Vec<&ExportRow>> = BTreeMap::new();
+    for row in &export_rows {
+        groups_data
+            .entry((row.group_id, row.is_reserve))
+            .or_default()
+            .push(row);
+    }
 
-        sheet.write_string(excel_row, 0, &row.group_name)?;
-        sheet.write_string(excel_row, 1, &row.animal_id)?;
-        sheet.write_string(excel_row, 2, row.sex_chinese())?;
+    // Write data rows and statistics rows
+    let mut current_excel_row = 2u32;
 
-        for (col_idx, &value) in row.indicators.iter().enumerate() {
-            sheet.write_number(excel_row, (col_idx + 3) as u16, value)?;
+    for ((group_id, is_reserve), group_rows) in groups_data.iter() {
+        // Write animal data rows for this group
+        for row in group_rows {
+            sheet.write_string(current_excel_row, 0, &row.group_name)?;
+            sheet.write_string(current_excel_row, 1, &row.animal_id)?;
+            sheet.write_string(current_excel_row, 2, row.sex_chinese())?;
+
+            for (col_idx, &value) in row.indicators.iter().enumerate() {
+                sheet.write_number(current_excel_row, (col_idx + 3) as u16, value)?;
+            }
+            current_excel_row += 1;
         }
+
+        // Add statistics row only for experimental groups (not reserve groups)
+        if !is_reserve {
+            let num_indicators = config.selected_indicators.len();
+
+            // Write row label and group number
+            sheet.write_string(current_excel_row, 0, "均值±标准差")?;
+            sheet.write_number(current_excel_row, 1, (group_id + 1) as f64)?;
+            sheet.write_string(current_excel_row, 2, "")?; // Empty sex column
+
+            // Calculate and write mean±std for each indicator
+            for indicator_idx in 0..num_indicators {
+                let values: Vec<f64> = group_rows
+                    .iter()
+                    .map(|r| r.indicators[indicator_idx])
+                    .collect();
+
+                let (mean, std) = calculate_mean_std(&values);
+                let formatted = format!("{:.2}±{:.2}", mean, std);
+                sheet.write_string(current_excel_row, (indicator_idx + 3) as u16, &formatted)?;
+            }
+            current_excel_row += 1;
+        }
+
+        // Add a blank row after each group for better readability
+        current_excel_row += 1;
     }
 
     // Auto-fit columns (approximate)
@@ -246,6 +286,20 @@ fn write_grouping_sheet_to(
     sheet.set_column_width(2, 8)?; // Sex
 
     Ok(())
+}
+
+/// Calculate mean and standard deviation for a set of values
+fn calculate_mean_std(values: &[f64]) -> (f64, f64) {
+    let n = values.len() as f64;
+    if n == 0.0 {
+        return (0.0, 0.0);
+    }
+
+    let mean = values.iter().sum::<f64>() / n;
+    let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n;
+    let std = variance.sqrt();
+
+    (mean, std)
 }
 
 /// Write Sheet 2: Statistical test results
