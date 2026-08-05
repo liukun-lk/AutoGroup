@@ -1,6 +1,8 @@
+import { useEffect } from "react";
 import { Provider } from "jotai";
 import { useAtom } from "jotai";
 import { currentStepAtom, errorAtom } from "./stores";
+import { checkForUpdates } from "@/lib/updater";
 import { UploadPage } from "@/components/features/UploadPage";
 import { ConfigurePage } from "@/components/features/ConfigurePage";
 import { ComputePage } from "@/components/features/ComputePage";
@@ -12,6 +14,10 @@ import { AlertCircle, X } from "lucide-react";
 function AppContent() {
   const [currentStep] = useAtom(currentStepAtom);
   const [error, setError] = useAtom(errorAtom);
+
+  useEffect(() => {
+    void checkForUpdates();
+  }, []);
 
   const renderStep = () => {
     switch (currentStep) {

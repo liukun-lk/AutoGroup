@@ -54,4 +54,8 @@ rust_xlsxwriter = "0.83"
 
 # Clipboard
 arboard = "3"
+tauri-plugin-process = "2"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
 
