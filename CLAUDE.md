@@ -178,9 +178,10 @@ cargo test real_data_test
 
 ### Test Data
 
-**Location:** `通用动物实验自动分组软件_测试用数据.xlsx` (root directory)
-- 10 animals (6 male, 4 female)
-- 73 indicators
+**Location:** `docs/通用动物实验自动分组软件_测试用数据.xlsx`
+- 9 animals (6 male, 3 female)
+- 71 parsed indicator keys, of which 3 (`样本号`, `样品识别号`, `FULLNAME`) are text columns and
+  never enter the statistics, so "all indicators" means 68 tested
 - Multi-row headers (Row 1: English names, Row 2: Chinese names + units)
 
 ## Code Style & Conventions
@@ -243,20 +244,26 @@ See `src-tauri/src/core/exporter.rs` for the canonical implementation.
 ### Statistical Engine
 
 All statistical tests are **pure Rust** implementations (no Python/R dependencies):
-- Validated against scipy/statsmodels in development
 - Use `statrs` crate for distributions, but custom implementations for:
-  - Levene test (Brown-Forsythe variant)
+  - Levene test (mean-centered, i.e. the original Levene — not Brown-Forsythe, despite what
+    earlier notes claimed)
   - Welch ANOVA
-  - Tukey HSD
-  - Dunnett's T3
+  - Tukey HSD (approximated, **not** the studentized range distribution)
+  - Dunnett's T3 (currently unadjusted pairwise Welch t — no multiplicity correction)
+
+The last two deviate measurably from the textbook tests. Before trusting any post-hoc P value
+for k >= 3 groups, read `.claude/skills/animal-grouping/references/statistics.md` (deviations are
+quantified there) and cross-check with the exact reference implementation:
+`python3 .claude/skills/animal-grouping/scripts/grouping_engine.py verify --help`.
 
 ### Performance Characteristics
 
-- **Enumeration algorithm:** Suitable for ≤50 animals (current test data: 10 animals)
+- **Enumeration algorithm:** Suitable for ≤50 animals (current test data: 9 animals)
 - **Parallel evaluation:** Uses `rayon` to evaluate candidates concurrently
-- **Expected performance:** < 1s for test data (10 animals, 73 indicators, 2 groups)
+- **Expected performance:** < 1s for test data (9 animals, 71 indicators, 2 groups)
 
-For future scaling (>50 animals), Monte Carlo sampling should be implemented.
+Monte Carlo sampling already kicks in above 500 000 combinations (`enumerator.rs`), but it uses
+`thread_rng`, so large-dataset runs are not reproducible.
 
 ## Documentation
 
@@ -269,6 +276,13 @@ For future scaling (>50 animals), Monte Carlo sampling should be implemented.
 - `PROGRESS_SUMMARY.md`: Development status (85% backend, 0% frontend as of 2026-02-12)
 
 **Progress reports:** `docs/*_completion.md` files document completed phases
+
+**Grouping engine spec:** `.claude/skills/animal-grouping/` is the authoritative reference for the
+grouping algorithm — the five-stage contract, the test-selection cascade, the validity rule, known
+edge cases, and a zero-dependency Python reference implementation
+(`scripts/grouping_engine.py`) that computes exact P values and can audit the Rust engine's output.
+Consult it before changing anything under `src-tauri/src/core/grouping/` or `.../stats/`, and before
+answering "is this grouping balanced / is this P value right".
 
 ## Common Workflows
 
