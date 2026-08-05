@@ -44,9 +44,7 @@ pub fn enumerate_all(animals: &[Animal], config: &GroupConfig) -> Result<Vec<Can
         enumerate_multi_groups_exhaustive(&male_indices, &female_indices, config)?
     } else {
         // Use Monte Carlo sampling for large combination spaces
-        println!(
-            "Using Monte Carlo sampling with {MONTE_CARLO_SAMPLE_SIZE} samples"
-        );
+        println!("Using Monte Carlo sampling with {MONTE_CARLO_SAMPLE_SIZE} samples");
         enumerate_multi_groups_sampling(
             &male_indices,
             &female_indices,

@@ -44,10 +44,7 @@ pub fn evaluate_grouping_with_constraints(
             .enumerate()
             .filter_map(|(group_idx, animal_indices)| {
                 // Skip reserve groups (they don't participate in statistical tests)
-                let is_experimental = experimental_groups
-                    .get(&group_idx)
-                    .copied()
-                    .unwrap_or(true); // Default to experimental if no constraint
+                let is_experimental = experimental_groups.get(&group_idx).copied().unwrap_or(true); // Default to experimental if no constraint
 
                 if !is_experimental {
                     return None;

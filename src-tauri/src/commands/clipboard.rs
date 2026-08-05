@@ -19,7 +19,10 @@ pub async fn parse_clipboard_files() -> Result<Vec<String>, String> {
                 Ok(paths)
             }
             Err(e) => {
-                println!("[Rust] parse_clipboard_files: No files in clipboard - {}", e);
+                println!(
+                    "[Rust] parse_clipboard_files: No files in clipboard - {}",
+                    e
+                );
                 Ok(vec![]) // No files in clipboard, return empty list
             }
         }

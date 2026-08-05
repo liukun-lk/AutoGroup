@@ -174,19 +174,10 @@ fn is_unit_string(s: &str) -> bool {
     // Pure unit patterns (not indicator names with units)
     // Units are typically short and contain only unit characters
     let common_pure_units = [
-        "kg", "g", "mg", "ug", "ng",
-        "℃", "°C",
-        "L", "mL", "uL",
-        "U", "IU",
-        "mol", "mmol", "umol", "nmol",
-        "m", "cm", "mm",
-        "sec", "min", "h",
-        "%",
-        "fL", "pg",
-        "U/L", "g/L", "mg/L", "mmol/L", "umol/L", "nmol/L",
-        "10^9/L", "10^12/L",
-        "deg",
-        "A/G", "AST/ALT", // Ratio indicators treated as units in some cases
+        "kg", "g", "mg", "ug", "ng", "℃", "°C", "L", "mL", "uL", "U", "IU", "mol", "mmol", "umol",
+        "nmol", "m", "cm", "mm", "sec", "min", "h", "%", "fL", "pg", "U/L", "g/L", "mg/L",
+        "mmol/L", "umol/L", "nmol/L", "10^9/L", "10^12/L", "deg", "A/G",
+        "AST/ALT", // Ratio indicators treated as units in some cases
     ];
 
     // Check if it's exactly a common pure unit

@@ -108,9 +108,7 @@ pub fn export_multiple_results(
             let stats_sheet = workbook.add_worksheet();
             stats_sheet
                 .set_name(format!("方案{rank}-统计"))
-                .with_context(|| {
-                    format!("Failed to set stats sheet name for candidate {rank}")
-                })?;
+                .with_context(|| format!("Failed to set stats sheet name for candidate {rank}"))?;
 
             write_statistics_sheet_to(stats_sheet, result)?;
         }
@@ -152,12 +150,7 @@ fn write_grouping_sheet_to(
     let group_constraints_map: std::collections::HashMap<usize, &SexConstraint> = config
         .group_constraints
         .as_ref()
-        .map(|constraints| {
-            constraints
-                .iter()
-                .map(|c| (c.group_index, c))
-                .collect()
-        })
+        .map(|constraints| constraints.iter().map(|c| (c.group_index, c)).collect())
         .unwrap_or_default();
 
     // Prepare export rows
