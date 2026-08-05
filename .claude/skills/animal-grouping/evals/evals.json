@@ -1,0 +1,46 @@
+{
+  "skill_name": "animal-grouping",
+  "notes": "Test prompts for iterating on this skill. Run each with the skill available and (for regressions) once without, then compare. Assertions are checkable against the transcript plus any files the run produced.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "suspicious-saturated-posthoc",
+      "prompt": "我们把 9 只动物分成 3 组（每组 2 雄 1 雌）跑出来的结果里，Tukey 事后比较的 P 值全都是 1.000000，7 个指标 21 个比较无一例外。这正常吗？这份结果能不能拿去写报告？",
+      "expected_output": "识别出这是 tukey.rs 的近似（q/√2 折算成 t 后乘 k 再截断到 1）导致的饱和，而非数据本身完美平衡；用 Python 参考实现给出精确事后 P 值；明确区分可信部分（Levene/ANOVA）与不可信部分（事后检验）；给出可操作建议。",
+      "assertions": [
+        "指出根因是 Rust tukey_q_to_p 的 Bonferroni-like 近似 + 截断到 1.0，不是数据完美平衡",
+        "实际运行了 grouping_engine.py（verify 或 group），而不是仅凭阅读代码推断",
+        "给出精确 Tukey 事后 P 值，量级落在 0.6-1.0 而非全部 1.000000",
+        "明确说明 Levene 与 ANOVA 的 P 值与 Rust 一致、可信，问题只在事后检验",
+        "回答了「能不能写报告」这个问题本身，而不只是描述缺陷"
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "compute-two-group-split",
+      "prompt": "用 docs/ 目录里那份测试数据，帮我分成两组：一组 3 雄 2 雌，另一组 3 雄 1 雌，指标用 kg、ALT、AST、TP、ALB、GLU，α 取 0.05。给我最优的一版分组，并说明每个指标是否达到平衡、结果可不可信。",
+      "expected_output": "用 group 子命令算出最优方案，列出两组的动物编号与逐指标 P 值，并指出 k=2 场景 Rust 与精确实现一致、无事后检验、结果可信。",
+      "assertions": [
+        "用 grouping_engine.py group 完成计算，未自行另写统计脚本",
+        "给出了具体的动物编号分组结果，而不只是描述方法",
+        "逐指标报告了 Levene P 与主检验 P，并标明用的是 Student 还是 Welch t 检验",
+        "说明两组场景不涉及事后检验，且 Rust 与精确实现一致，因此结果可直接采用"
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "infeasible-config-diagnosis",
+      "prompt": "配了 4 组，每组 3 雄 2 雌，跑出来一直报 No valid grouping found。数据是 docs 里那份测试数据。怎么回事？",
+      "expected_output": "识别出这是配置不可行（需要 12 雄 8 雌，数据只有 6 雄 3 雌），属于前置校验问题而非算法找不到平衡方案，并给出可行的配额建议。",
+      "assertions": [
+        "指出根因是配额与数据集的性别数量不匹配，而不是统计上无法平衡",
+        "给出了数据集的真实构成（9 只，6 雄 3 雌）",
+        "提出了在该数据集下实际可行的分组配额",
+        "没有把时间浪费在调 α 或减少指标这类与根因无关的方向上"
+      ],
+      "files": []
+    }
+  ]
+}
