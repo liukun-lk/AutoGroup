@@ -1,4 +1,5 @@
 // Integration tests for the complete grouping pipeline
+use crate::core::grouping::evaluator;
 use crate::core::{grouping, models::*};
 use std::collections::HashMap;
 
@@ -399,6 +400,90 @@ mod integration_tests {
             result.candidates[0].assignments.len(),
             10,
             "the reserve animal is still assigned"
+        );
+    }
+
+    /// Post-hoc comparisons must be labelled with the caller's `group_id`, not with the
+    /// index inside the compacted list of experimental groups.
+    ///
+    /// The statistics skip reserve groups, so with a reserve group sitting *between* two
+    /// experimental ones the two numbering schemes diverge: experimental groups 0, 1, 2 are
+    /// `group_id` 0, 2, 3. Reporting the compacted index would tell the user that "组1 vs
+    /// 组2" differed when the comparison was actually between 组1 and 组3.
+    ///
+    /// The candidate is built directly rather than enumerated, so the test cannot start
+    /// passing vacuously because no valid grouping was found.
+    #[test]
+    fn posthoc_comparisons_use_original_group_ids() {
+        let (dataset, _, mut stat_config) = three_group_fixture(OptimizationMode::Optimized);
+        stat_config.selected_indicators = vec!["Weight".to_string()];
+
+        // Animals 0..=5 are male, 6..=8 female. Three experimental groups of 1M + 1F, with
+        // the three remaining males parked in a reserve group at index 1.
+        let candidate = CandidateGrouping {
+            groups: vec![vec![0, 6], vec![1, 2, 3], vec![4, 7], vec![5, 8]],
+        };
+
+        let constraints = vec![
+            SexConstraint {
+                group_index: 0,
+                male_count: 1,
+                female_count: 1,
+                group_type: GroupType::Experimental,
+                custom_name: None,
+            },
+            SexConstraint {
+                group_index: 1,
+                male_count: 3,
+                female_count: 0,
+                group_type: GroupType::Reserve,
+                custom_name: Some("备用动物".to_string()),
+            },
+            SexConstraint {
+                group_index: 2,
+                male_count: 1,
+                female_count: 1,
+                group_type: GroupType::Experimental,
+                custom_name: None,
+            },
+            SexConstraint {
+                group_index: 3,
+                male_count: 1,
+                female_count: 1,
+                group_type: GroupType::Experimental,
+                custom_name: None,
+            },
+        ];
+
+        let result = evaluator::evaluate_grouping_with_constraints(
+            &candidate,
+            &dataset,
+            &stat_config,
+            Some(&constraints),
+        )
+        .unwrap();
+
+        assert_eq!(result.summary.num_groups, 3, "reserve must not be counted");
+
+        let stat = result
+            .statistics
+            .first()
+            .expect("Weight must have been tested");
+        let comparisons = stat
+            .posthoc_results
+            .as_ref()
+            .expect("three experimental groups produce post-hoc comparisons");
+
+        let mut pairs: Vec<(usize, usize)> = comparisons
+            .iter()
+            .map(|c| (c.group1_id, c.group2_id))
+            .collect();
+        pairs.sort_unstable();
+
+        assert_eq!(
+            pairs,
+            vec![(0, 2), (0, 3), (2, 3)],
+            "post-hoc pairs must reference group_id, skipping the reserve group at index 1"
         );
     }
 

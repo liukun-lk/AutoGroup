@@ -4,15 +4,199 @@ use crate::core::{exporter, grouping, models::*, parser};
 #[cfg(test)]
 mod export_integration_tests {
     use super::*;
+    use crate::core::grouping::evaluator;
+    use calamine::{open_workbook_auto, Reader};
+
+    fn fixture_path(relative: &str) -> String {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(relative)
+            .to_str()
+            .expect("fixture path must be valid UTF-8")
+            .to_string()
+    }
+
+    fn sheet_names(path: &str) -> Vec<String> {
+        open_workbook_auto(path)
+            .expect("exported workbook must open")
+            .sheet_names()
+            .to_vec()
+    }
+
+    fn read_sheet(path: &str, name: &str) -> Vec<Vec<String>> {
+        let mut workbook = open_workbook_auto(path).expect("exported workbook must open");
+        workbook
+            .worksheet_range(name)
+            .unwrap_or_else(|e| panic!("sheet {name} must be readable: {e}"))
+            .rows()
+            .map(|row| row.iter().map(|cell| cell.to_string()).collect())
+            .collect()
+    }
+
+    /// A reserve group stays a reserve group only if the caller hands its constraints to the
+    /// exporter. Without them the export silently promotes the reserve animals into an
+    /// experimental group: wrong label, sorted among the experimental groups, given a
+    /// mean±SD row they must not have, and counted in 分组数量. The frontend regressed
+    /// exactly this way by omitting `groupConstraints` from the `export_result` call.
+    ///
+    /// Three experimental groups of 1M + 1F plus a reserve of 3M. The candidate is built
+    /// directly so the test cannot pass vacuously when no valid grouping exists for such
+    /// small groups.
+    #[test]
+    fn export_isolates_the_reserve_group() {
+        let dataset = parser::parse_excel_file(&fixture_path("tests/fixtures/e2e_input.xlsx"))
+            .expect("input fixture must parse");
+
+        let males: Vec<usize> = dataset
+            .animals
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.sex == Sex::Male)
+            .map(|(i, _)| i)
+            .collect();
+        let females: Vec<usize> = dataset
+            .animals
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.sex == Sex::Female)
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!((males.len(), females.len()), (6, 3));
+
+        let candidate = CandidateGrouping {
+            groups: vec![
+                vec![males[0], females[0]],
+                vec![males[1], females[1]],
+                vec![males[2], females[2]],
+                vec![males[3], males[4], males[5]],
+            ],
+        };
+
+        let mut constraints: Vec<SexConstraint> = (0..3)
+            .map(|i| SexConstraint {
+                group_index: i,
+                male_count: 1,
+                female_count: 1,
+                group_type: GroupType::Experimental,
+                custom_name: None,
+            })
+            .collect();
+        constraints.push(SexConstraint {
+            group_index: 3,
+            male_count: 3,
+            female_count: 0,
+            group_type: GroupType::Reserve,
+            custom_name: Some("备用动物".to_string()),
+        });
+
+        let selected_indicators = vec!["kg".to_string()];
+        assert!(dataset.indicator_names.contains(&selected_indicators[0]));
+
+        let stat_config = StatConfig {
+            selected_indicators: selected_indicators.clone(),
+            alpha: 0.05,
+            mode: OptimizationMode::Optimized,
+            max_candidates: 10,
+        };
+
+        let result = evaluator::evaluate_grouping_with_constraints(
+            &candidate,
+            &dataset,
+            &stat_config,
+            Some(&constraints),
+        )
+        .expect("evaluation must succeed");
+
+        assert_eq!(result.summary.num_groups, 3);
+
+        let output_dir = std::env::temp_dir().join("autogroup_export_reserve");
+        std::fs::create_dir_all(&output_dir).expect("temp dir");
+        let output_path = output_dir.join("reserve.xlsx");
+        let output = output_path.to_str().unwrap().to_string();
+
+        let sheet_config = exporter::SheetConfig {
+            selected_indicators,
+            include_statistics: true,
+            include_summary: true,
+            group_constraints: Some(constraints),
+        };
+
+        exporter::export_grouping_result(&result, &dataset, &sheet_config, &output)
+            .expect("export must succeed");
+
+        assert_eq!(
+            sheet_names(&output),
+            vec!["分组结果", "统计结果", "事后比较", "汇总信息"],
+        );
+
+        // --- 分组结果: label, sort position, and no statistics row for the reserve --------
+        let grouping_sheet = read_sheet(&output, "分组结果");
+        let group_column: Vec<&str> = grouping_sheet
+            .iter()
+            .skip(2) // dual-row header
+            .map(|row| row[0].as_str())
+            .collect();
+
+        assert_eq!(
+            group_column.iter().filter(|c| **c == "备用动物").count(),
+            3,
+            "all three reserve animals must carry the custom name, not 组4: {group_column:?}"
+        );
+
+        let last_three = &group_column[group_column.len() - 3..];
+        assert!(
+            last_three.iter().all(|c| *c == "备用动物"),
+            "reserve animals must sort last, got {group_column:?}"
+        );
+
+        assert_eq!(
+            group_column.iter().filter(|c| **c == "均值±标准差").count(),
+            3,
+            "one mean±SD row per experimental group and none for the reserve: {group_column:?}"
+        );
+
+        // --- 汇总信息: the reserve must not inflate the group count ----------------------
+        let summary_sheet = read_sheet(&output, "汇总信息");
+        let group_count = summary_sheet
+            .iter()
+            .find(|row| row[0] == "分组数量")
+            .and_then(|row| row.get(1))
+            .expect("汇总信息 must report 分组数量")
+            .clone();
+        assert_eq!(group_count, "3", "reserve group must not be counted");
+
+        assert!(
+            summary_sheet.iter().any(|row| row[0].contains("备用动物")),
+            "the reserve group must still be listed in the summary"
+        );
+
+        // --- 事后比较: pairs are between experimental groups only ------------------------
+        let posthoc_sheet = read_sheet(&output, "事后比较");
+        let pairs: Vec<&str> = posthoc_sheet
+            .iter()
+            .skip(1)
+            .map(|row| row[1].as_str())
+            .collect();
+
+        assert_eq!(pairs.len(), 3, "C(3,2) = 3 comparisons for one indicator");
+        assert!(
+            !pairs.iter().any(|p| p.contains("备用动物")),
+            "the reserve group must not appear in post-hoc comparisons: {pairs:?}"
+        );
+        let mut sorted = pairs.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, vec!["组1 vs. 组2", "组1 vs. 组3", "组2 vs. 组3"],);
+
+        let _ = std::fs::remove_file(&output_path);
+    }
 
     #[test]
     #[ignore] // Run with: cargo test --lib export_integration_tests -- --ignored --nocapture
     fn test_end_to_end_export() {
         // Path to real test data
-        let excel_path = "/Users/lb/Documents/source_code/github/AutoGroup/docs/通用动物实验自动分组软件_测试用数据.xlsx";
+        let excel_path = fixture_path("../docs/通用动物实验自动分组软件_测试用数据.xlsx");
 
         println!("\n=== Step 1: Parse Excel File ===");
-        let dataset = match parser::parse_excel_file(excel_path) {
+        let dataset = match parser::parse_excel_file(&excel_path) {
             Ok(d) => {
                 println!("✓ Successfully parsed Excel file");
                 println!("  Animals: {}", d.animals.len());
@@ -134,9 +318,9 @@ mod export_integration_tests {
     #[ignore]
     fn test_export_with_selected_indicators() {
         // Similar to above but only export selected indicators
-        let excel_path = "/Users/lb/Documents/source_code/github/AutoGroup/docs/通用动物实验自动分组软件_测试用数据.xlsx";
+        let excel_path = fixture_path("../docs/通用动物实验自动分组软件_测试用数据.xlsx");
 
-        let dataset = parser::parse_excel_file(excel_path).unwrap();
+        let dataset = parser::parse_excel_file(&excel_path).unwrap();
 
         // Only test with 5 indicators
         let selected_indicators = vec!["kg", "℃", "ALT", "AST", "TP"]

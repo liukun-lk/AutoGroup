@@ -53,11 +53,16 @@ export function ResultsPage() {
         ? selectedIndicators
         : dataset.indicator_names;
 
+      // The backend needs the same constraints the grouping was computed with. Without
+      // them a reserve group is indistinguishable from an experimental one: it would be
+      // labelled 组N instead of its custom name, sorted among the experimental groups,
+      // given a mean±SD row it should not have, and counted in 分组数量.
       await invoke("export_result", {
         result,
         dataset,
         selectedIndicators: indicatorsToExport,
         outputPath: filePath,
+        groupConstraints: groupConfig?.sex_constraints,
       });
 
       // Show success message
@@ -65,7 +70,7 @@ export function ResultsPage() {
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
     }
-  }, [result, dataset, selectedIndicators, setError]);
+  }, [result, dataset, selectedIndicators, groupConfig, setError]);
 
   const handleRestart = () => {
     resetState();
