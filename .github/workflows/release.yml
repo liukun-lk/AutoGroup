@@ -47,10 +47,12 @@ jobs:
       - name: Install Apple intermediate certificates
         if: matrix.platform == 'macos-latest'
         run: |
-          curl -sO https://www.apple.com/certificateauthority/DeveloperIDCA.cer
-          curl -sO https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
-          sudo security import DeveloperIDCA.cer -k /Library/Keychains/System.keychain
-          sudo security import DeveloperIDG2CA.cer -k /Library/Keychains/System.keychain
+          for cert in DeveloperIDCA.cer DeveloperIDG2CA.cer; do
+            curl -sO "https://www.apple.com/certificateauthority/${cert}"
+            # import exits non-zero when the certificate already exists on
+            # the runner; that still satisfies this step's goal.
+            sudo security import "${cert}" -k /Library/Keychains/System.keychain || true
+          done
 
       - uses: tauri-apps/tauri-action@v0
         env:
