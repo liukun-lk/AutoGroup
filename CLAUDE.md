@@ -151,11 +151,66 @@ bun run tauri build
 
 ## Testing Strategy
 
+### Required check on every change (do not skip)
+
+**Every code change in this repository — Rust or TypeScript, feature or refactor, one line or
+one thousand — must pass the following before it can be called done.** Run them and read the
+output; never claim a change works without having done so.
+
+```bash
+cd src-tauri
+cargo fmt                       # must be run before committing
+cargo test --release            # all tests, including the end-to-end golden test
+cargo clippy --all-targets      # must not add warnings on top of the existing baseline
+cd .. && bun run build          # tsc + vite build
+```
+
+If a change touches `core/grouping/`, `core/stats/`, `core/parser.rs` or `core/exporter.rs`,
+also run the slow suites:
+
+```bash
+cd src-tauri && cargo test --release -- --ignored   # real-data + performance harnesses
+```
+
+The single most important gate is the end-to-end test described below. It is the only test
+that checks the whole pipeline against output a human actually accepted.
+
+### End-to-end golden test (`tests/e2e_grouping_test.rs`)
+
+```
+tests/fixtures/e2e_input.xlsx
+  → parse → compute grouping → export
+  → compared cell by cell against tests/fixtures/e2e_expected_output.xlsx
+```
+
+Both fixtures are real application artifacts; only the animal IDs were anonymized (the study
+code became a `DEMO0xx` prefix) and the document properties scrubbed. Every measurement,
+header, sheet and cell is untouched. The expected grouping was independently confirmed to be
+the statistical optimum by the exact Python reference implementation in
+`.claude/skills/animal-grouping/`.
+
+It asserts, in order:
+
+1. **Parse** — 9 animals (6M + 3F), 73 indicator keys from the dual-row header
+2. **Indicator filtering** — 70 numeric indicators after dropping the 3 text columns
+   (`样本号`, `样品识别号`, `FULLNAME`), matching `src/utils/indicator-filter.ts`
+3. **Grouping** — the winning assignment must match the accepted one animal by animal, with
+   all 70 indicators passing at α = 0.05 in Strict mode
+4. **Export** — every cell of all three sheets (`分组结果` / `统计结果` / `汇总信息`).
+   Text compares exactly; numbers compare to a `1e-9` relative tolerance so cross-platform
+   libm differences don't cause false failures. Only the `计算耗时 (ms)` row is skipped.
+
+**If this test fails, assume the code regressed — not that the fixture is stale.** The failure
+message names the sheet, row, column and both values. Only regenerate the fixture when you
+*intentionally* changed the output format, and say so explicitly in the commit message. See
+`src-tauri/tests/fixtures/README.md` for provenance and the regeneration procedure.
+
 ### Rust Tests
 
 Tests are located in:
 - Unit tests: `#[cfg(test)] mod tests` within each module
 - Integration tests: `src-tauri/src/core/grouping/real_data_test.rs` (uses actual test data)
+- End-to-end test: `src-tauri/tests/e2e_grouping_test.rs` (see above)
 
 **Running specific test categories:**
 ```bash
@@ -172,17 +227,29 @@ cargo test real_data_test
 ```
 
 **Key test files:**
+- `src-tauri/tests/e2e_grouping_test.rs`: whole-pipeline golden test (highest-value gate)
 - `src-tauri/src/core/stats/*/tests`: Statistical test validation
-- `src-tauri/src/core/grouping/tests.rs`: Algorithm unit tests
+- `src-tauri/src/core/grouping/tests.rs`: Algorithm unit tests, including
+  `test_top_candidates_match_full_evaluation` — proves the two-pass scoring pipeline returns
+  exactly what fully evaluating every candidate and sorting would return
+- `src-tauri/src/core/grouping/perf_repro.rs`: `#[ignore]`d performance harness guarding the
+  ≥3-group blow-up (see Performance Characteristics)
 - `src-tauri/src/core/exporter_test.rs`: Export format validation
 
 ### Test Data
 
-**Location:** `docs/通用动物实验自动分组软件_测试用数据.xlsx`
+**End-to-end fixtures:** `src-tauri/tests/fixtures/` (anonymized; see its `README.md`)
+- `e2e_input.xlsx`: 9 animals (6 male, 3 female), 73 parsed indicator keys → 70 tested
+- `e2e_expected_output.xlsx`: the accepted 3-group export for that input
+
+**Legacy sample:** `docs/通用动物实验自动分组软件_测试用数据.xlsx`
 - 9 animals (6 male, 3 female)
 - 71 parsed indicator keys, of which 3 (`样本号`, `样品识别号`, `FULLNAME`) are text columns and
   never enter the statistics, so "all indicators" means 68 tested
 - Multi-row headers (Row 1: English names, Row 2: Chinese names + units)
+
+All test data paths are resolved from `env!("CARGO_MANIFEST_DIR")`, so tests run from any
+checkout. Never reintroduce an absolute path — a test that silently skips protects nothing.
 
 ## Code Style & Conventions
 
@@ -260,10 +327,21 @@ quantified there) and cross-check with the exact reference implementation:
 
 - **Enumeration algorithm:** Suitable for ≤50 animals (current test data: 9 animals)
 - **Parallel evaluation:** Uses `rayon` to evaluate candidates concurrently
-- **Expected performance:** < 1s for test data (9 animals, 71 indicators, 2 groups)
+- **Expected performance:** ~1–2 s and well under 200 MB for a 3-group, 46-indicator run over
+  100 000 candidates
 
 Monte Carlo sampling already kicks in above 500 000 combinations (`enumerator.rs`), but it uses
 `thread_rng`, so large-dataset runs are not reproducible.
+
+**Do not reintroduce per-candidate result materialization.** `compute_optimal_grouping` scores
+every candidate with an allocation-free `CandidateScore` and builds the full `GroupingResult`
+only for the Top-N winners. Building one per candidate costs ~13 KB each, which at the 10^5–10^6
+candidates that ≥3 groups produce meant 1.5 GB+ of live heap and a run that never appeared to
+finish on Windows. `perf_repro.rs` guards this; run it after touching the evaluation path:
+
+```bash
+cd src-tauri && cargo test --release perf_ -- --nocapture --ignored
+```
 
 ## Documentation
 
@@ -298,9 +376,14 @@ answering "is this grouping balanced / is this P value right".
 
 1. Core algorithm: `src-tauri/src/core/grouping/mod.rs::compute_optimal_grouping`
 2. Update `enumerator.rs` for candidate generation changes
-3. Update `evaluator.rs` for scoring/filtering changes
+3. Update `evaluator.rs` for scoring/filtering changes — keep the scoring pass and the full
+   evaluation sharing one indicator loop, so ranking numbers and reported numbers cannot diverge
 4. Run `cargo test grouping` to validate
-5. Test with real data: `cargo test real_data_test`
+5. Test with real data: `cargo test real_data_test -- --ignored`
+6. **Run the end-to-end test:** `cargo test --test e2e_grouping_test`
+7. Check performance did not regress: `cargo test --release perf_ -- --nocapture --ignored`
+8. For any question about whether a P value or a grouping is correct, cross-check with the exact
+   Python reference implementation in `.claude/skills/animal-grouping/` — do not reason it out
 
 ### Adding Tauri Commands
 
@@ -315,7 +398,11 @@ answering "is this grouping balanced / is this P value right".
 2. **Sex conversion:** Always use `Sex::to_chinese()` for export; never hardcode "M"/"F"
 3. **Indicator metadata:** Use `IndicatorMetadata.key` for lookups, `display_name` for UI/export
 4. **Parallel safety:** Grouping evaluation is CPU-bound and thread-safe (uses `rayon::par_iter`)
-5. **Test data paths:** Hardcoded test data path in `real_data_test.rs` may need adjustment on different machines
+5. **Test data paths:** Resolve every fixture from `env!("CARGO_MANIFEST_DIR")`; absolute paths
+   make tests skip silently on other machines
+6. **Reserve groups:** A reserve group is only created when it actually holds animals, and it is
+   excluded from `ResultSummary.num_groups`, from the statistics, and from the exported group
+   count. An empty reserve group must never be sent to the backend
 
 ## Dependencies
 

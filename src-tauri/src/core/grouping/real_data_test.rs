@@ -9,7 +9,11 @@ mod real_data_test {
     #[ignore] // Run with: cargo test --lib real_data_test -- --ignored --nocapture
     fn test_with_real_excel_data() {
         // Path to the real test data
-        let excel_path = "/Users/lb/Documents/source_code/github/AutoGroup/docs/通用动物实验自动分组软件_测试用数据.xlsx";
+        // Repo-relative so the test runs from any checkout, not just one machine.
+        let excel_path = &format!(
+            "{}/../docs/通用动物实验自动分组软件_测试用数据.xlsx",
+            env!("CARGO_MANIFEST_DIR")
+        );
 
         println!("\n=== Step 1: Parse Excel File ===");
         let dataset = match parser::parse_excel_file(excel_path) {
@@ -250,7 +254,11 @@ mod real_data_test {
     #[ignore] // Run with: cargo test --lib test_three_groups_real_data -- --ignored --nocapture
     fn test_three_groups_real_data() {
         // Path to the real test data
-        let excel_path = "/Users/lb/Documents/source_code/github/AutoGroup/docs/通用动物实验自动分组软件_测试用数据.xlsx";
+        // Repo-relative so the test runs from any checkout, not just one machine.
+        let excel_path = &format!(
+            "{}/../docs/通用动物实验自动分组软件_测试用数据.xlsx",
+            env!("CARGO_MANIFEST_DIR")
+        );
 
         println!("\n=== THREE-GROUP GROUPING TEST ===");
         println!("\n=== Step 1: Parse Excel File ===");

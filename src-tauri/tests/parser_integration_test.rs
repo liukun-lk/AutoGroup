@@ -2,13 +2,12 @@ use autogroup_lib::core::parser::parse_excel_file;
 
 #[test]
 fn test_parse_user_file() {
-    let path = "/Users/lb/Downloads/分组测试.xlsx";
-
-    // Skip if file doesn't exist (CI environment)
-    if !std::path::Path::new(path).exists() {
-        eprintln!("Test file not found, skipping test");
-        return;
-    }
+    // Repo-relative fixture: this used to point at a file in one developer's Downloads
+    // folder, so it silently skipped everywhere else and protected nothing.
+    let path = &format!(
+        "{}/tests/fixtures/e2e_input.xlsx",
+        env!("CARGO_MANIFEST_DIR")
+    );
 
     match parse_excel_file(path) {
         Ok(dataset) => {
