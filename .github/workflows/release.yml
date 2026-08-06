@@ -21,6 +21,9 @@ jobs:
           - platform: windows-latest
             args: ""
     runs-on: ${{ matrix.platform }}
+    # The 6 APPLE_* secrets live in this GitHub environment (its name is
+    # just the first secret's name); jobs only see them when it is declared.
+    environment: APPLE_CERTIFICATE
     steps:
       - uses: actions/checkout@v5
 
