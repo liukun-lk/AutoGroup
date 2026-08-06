@@ -8,7 +8,7 @@ import { datasetAtom, currentStepAtom, clearErrorAtom, resetStateAtom } from "@/
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Upload, FileSpreadsheet, CheckCircle2 } from "lucide-react";
+import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle } from "lucide-react";
 import type { Dataset } from "@/types";
 
 export function UploadPage() {
@@ -21,7 +21,14 @@ export function UploadPage() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [dragFileValid, setDragFileValid] = useState<boolean | null>(null);
 
-  const isExcelFile = (path: string) => /\.(xlsx|xls)$/i.test(path);
+  const isExcelFile = (path: string) => /\.(xlsx|xlsm|xls)$/i.test(path);
+
+  const describeUnsupportedFile = (path: string, source: "拖拽" | "粘贴") => {
+    const fileName = path.split(/[\\/]/).pop() || path;
+    const ext = fileName.includes(".") ? fileName.split(".").pop()!.toLowerCase() : "";
+    const formatDesc = ext ? `.${ext} 格式` : "无扩展名";
+    return `${source}的文件「${fileName}」是${formatDesc}，暂不支持。\n请上传 .xlsx 格式的 Excel 文件；若是 .xls 或 .csv，请先用 Excel 另存为 .xlsx。`;
+  };
 
   const handleFileParse = useCallback(async (filePath: string) => {
     try {
@@ -53,8 +60,8 @@ export function UploadPage() {
       const selected = await open({
         multiple: false,
         filters: [{
-          name: 'Excel Files',
-          extensions: ['xlsx', 'xls']
+          name: 'Excel 文件',
+          extensions: ['xlsx', 'xlsm', 'xls']
         }]
       });
 
@@ -67,7 +74,7 @@ export function UploadPage() {
       await handleFileParse(filePath);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      setLocalError(errorMessage);
+      setLocalError(`打开文件选择框失败：${errorMessage}`);
       setIsLoading(false);
     }
   }, [clearError, handleFileParse]);
@@ -112,7 +119,7 @@ export function UploadPage() {
             if (isExcelFile(filePath)) {
               handleFileParse(filePath);
             } else {
-              setLocalError("请上传 .xlsx 或 .xls 格式的文件");
+              setLocalError(describeUnsupportedFile(filePath, "拖拽"));
             }
           }
         });
@@ -146,7 +153,7 @@ export function UploadPage() {
         const paths = await invoke<string[]>("parse_clipboard_files");
 
         if (paths.length === 0) {
-          setLocalError("剪贴板中没有文件");
+          setLocalError("剪贴板中没有文件。\n请先在访达 / 资源管理器中复制 Excel 文件，再回到本页面粘贴。");
           setIsLoading(false);
           return;
         }
@@ -155,12 +162,12 @@ export function UploadPage() {
         if (isExcelFile(filePath)) {
           await handleFileParse(filePath);
         } else {
-          setLocalError("剪贴板中的文件不是 .xlsx 或 .xls 格式");
+          setLocalError(describeUnsupportedFile(filePath, "粘贴"));
           setIsLoading(false);
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        setLocalError(`粘贴失败: ${errorMessage}`);
+        setLocalError(`从剪贴板读取文件失败：${errorMessage}`);
         setIsLoading(false);
       }
     };
@@ -185,7 +192,14 @@ export function UploadPage() {
           {/* Local Error Alert */}
           {localError && (
             <Alert variant="destructive">
-              <AlertDescription>{localError}</AlertDescription>
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>
+                <div className="font-semibold mb-1">文件导入失败</div>
+                <div className="whitespace-pre-line leading-relaxed">{localError}</div>
+                <div className="mt-2 text-xs opacity-80">
+                  可对照下方「文件格式要求」检查文件，或参考测试数据的排版方式。
+                </div>
+              </AlertDescription>
             </Alert>
           )}
 
@@ -214,7 +228,7 @@ export function UploadPage() {
 
               {isDragOver && dragFileValid === false && (
                 <h3 className="text-lg font-semibold mb-2 text-red-700 dark:text-red-400">
-                  ❌ 仅支持 .xlsx 或 .xls 文件
+                  ❌ 仅支持 Excel 文件（.xlsx）
                 </h3>
               )}
 
@@ -263,6 +277,7 @@ export function UploadPage() {
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <h4 className="font-medium text-blue-900 mb-2">文件格式要求：</h4>
             <ul className="text-sm text-blue-800 space-y-1">
+              <li>• 文件格式为 .xlsx（旧版 .xls 请先在 Excel 中另存为 .xlsx）</li>
               <li>• 第一个 sheet 为"原始数据"</li>
               <li>• Row 1: 英文指标名或单位（kg, ℃, ALT...）</li>
               <li>• Row 2: 中文列名或单位（体重, 肛温, U/L...）</li>

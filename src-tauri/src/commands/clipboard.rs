@@ -5,7 +5,7 @@ use arboard::Clipboard;
 pub async fn parse_clipboard_files() -> Result<Vec<String>, String> {
     // arboard's Clipboard is not Send, must be created and used in a separate thread
     let handle = std::thread::spawn(|| -> Result<Vec<String>, String> {
-        let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
+        let mut clipboard = Clipboard::new().map_err(|e| format!("无法访问系统剪贴板：{e}"))?;
         match clipboard.get().file_list() {
             Ok(file_list) => {
                 let paths: Vec<String> = file_list
@@ -30,6 +30,6 @@ pub async fn parse_clipboard_files() -> Result<Vec<String>, String> {
 
     match handle.join() {
         Ok(res) => res,
-        Err(_) => Err("Task execution failed: thread panicked".to_string()),
+        Err(_) => Err("读取剪贴板时发生内部错误，请改用「选择文件」按钮上传。".to_string()),
     }
 }

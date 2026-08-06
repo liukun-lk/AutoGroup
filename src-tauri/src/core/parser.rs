@@ -1,22 +1,35 @@
 use super::models::*;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use calamine::{open_workbook, Data, DataType, Reader, Xlsx};
 use std::collections::HashMap;
 
 pub fn parse_excel_file(path: &str) -> Result<Dataset> {
-    let mut workbook: Xlsx<_> =
-        open_workbook(path).with_context(|| format!("Failed to open Excel file: {path}"))?;
+    let file_name = file_name_of(path);
+
+    // calamine's Xlsx reader only understands the OOXML format; a legacy .xls
+    // would otherwise fail with an opaque zip error.
+    ensure_xlsx_extension(path, &file_name)?;
+
+    let mut workbook: Xlsx<_> = open_workbook(path).map_err(|e| {
+        anyhow!(
+            "无法打开文件「{file_name}」：{e}。\n\
+             请确认：① 文件确实是 Excel 的 .xlsx 格式（而非改了后缀的 .xls / .csv）；\
+             ② 文件没有损坏；③ 文件当前没有被 Excel 或 WPS 打开占用。"
+        )
+    })?;
 
     // Get first sheet (原始数据)
     let sheet_names = workbook.sheet_names().to_vec();
     if sheet_names.is_empty() {
-        return Err(anyhow!("Excel file has no sheets"));
+        return Err(anyhow!(
+            "文件「{file_name}」中没有任何工作表。请确认上传的是包含「原始数据」工作表的实验数据文件。"
+        ));
     }
 
     let first_sheet_name = sheet_names[0].clone();
-    let range = workbook
-        .worksheet_range(&first_sheet_name)
-        .with_context(|| format!("Failed to read sheet: {first_sheet_name}"))?;
+    let range = workbook.worksheet_range(&first_sheet_name).map_err(|e| {
+        anyhow!("无法读取工作表「{first_sheet_name}」：{e}。请尝试在 Excel 中重新另存为 .xlsx 后再上传。")
+    })?;
 
     // Collect all rows
     let mut rows = Vec::new();
@@ -26,7 +39,10 @@ pub fn parse_excel_file(path: &str) -> Result<Dataset> {
 
     if rows.len() < 3 {
         return Err(anyhow!(
-            "Excel file must have at least 3 rows (header + labels + data)"
+            "工作表「{}」只有 {} 行内容，不足以解析。\n\
+             文件至少需要 3 行：第 1 行英文指标名或单位、第 2 行中文列名、第 3 行起为动物数据。",
+            first_sheet_name,
+            rows.len()
         ));
     }
 
@@ -76,6 +92,15 @@ pub fn parse_excel_file(path: &str) -> Result<Dataset> {
         indicator_metadata.push(IndicatorMetadata::new(key, display_name, unit));
     }
 
+    if indicator_names.is_empty() {
+        return Err(anyhow!(
+            "在工作表「{}」的第 {} 行没有识别到任何指标列。\n\
+             请确认第 1 列为动物编号、第 2 列为性别，第 3 列及之后为指标名称（如 体重、ALT、WBC）。",
+            first_sheet_name,
+            header_row_idx + 1
+        ));
+    }
+
     // Determine data start row by detecting header row pattern
     // Header row typically contains text like "动物编号", "性别", "AnimalID", "Sex"
     // Data row contains numeric/specific values
@@ -111,12 +136,20 @@ pub fn parse_excel_file(path: &str) -> Result<Dataset> {
         };
 
         // Column 1: Sex
-        let sex = match row[1].get_string() {
-            Some(s) => Sex::from_str(s)
-                .map_err(|e| anyhow!("Invalid sex at row {}: {}", row_idx + 1, e))?,
+        let sex = match row.get(1).and_then(|cell| cell.get_string()) {
+            Some(s) => Sex::from_str(s).map_err(|_| {
+                anyhow!(
+                    "第 {} 行（动物编号 {}）的性别「{}」无法识别。\n\
+                     性别列（第 2 列）只接受：F / M、Female / Male、雌性 / 雄性。",
+                    row_idx + 1,
+                    animal_id,
+                    s.trim()
+                )
+            })?,
             None => {
                 return Err(anyhow!(
-                    "Missing sex at row {} for animal {}",
+                    "第 {} 行（动物编号 {}）缺少性别。\n\
+                     请在第 2 列填写 F / M 或 雌性 / 雄性；若该行是空行或备注行，请从数据区删除。",
                     row_idx + 1,
                     animal_id
                 ))
@@ -144,7 +177,12 @@ pub fn parse_excel_file(path: &str) -> Result<Dataset> {
     }
 
     if animals.is_empty() {
-        return Err(anyhow!("No valid animals found in Excel file"));
+        return Err(anyhow!(
+            "在工作表「{}」的第 {} 行及之后没有解析到任何动物数据。\n\
+             请确认数据行紧跟在表头行下方，且第 1 列填写了动物编号。",
+            first_sheet_name,
+            start_row + 1
+        ));
     }
 
     let male_count = animals.iter().filter(|a| a.sex == Sex::Male).count();
@@ -260,7 +298,10 @@ fn detect_data_start_row(rows: &[Vec<Data>]) -> Result<usize> {
     let data_row = header_row_idx + 1;
 
     if data_row >= rows.len() {
-        return Err(anyhow!("No data rows found after header"));
+        return Err(anyhow!(
+            "表头行（第 {} 行）之后没有任何数据行。请在表头下方填入动物数据后重新上传。",
+            header_row_idx + 1
+        ));
     }
 
     Ok(data_row)
@@ -273,7 +314,9 @@ fn detect_data_start_row(rows: &[Vec<Data>]) -> Result<usize> {
 /// Returns the row index of the header
 fn detect_header_row(rows: &[Vec<Data>]) -> Result<usize> {
     if rows.len() < 2 {
-        return Err(anyhow!("Excel file must have at least 2 rows"));
+        return Err(anyhow!(
+            "工作表内容不足 2 行，无法定位表头。请确认上传的是完整的实验数据文件。"
+        ));
     }
 
     // Look for header row by detecting common header keywords
@@ -305,7 +348,38 @@ fn detect_header_row(rows: &[Vec<Data>]) -> Result<usize> {
     if rows.len() > 1 {
         Ok(1)
     } else {
-        Err(anyhow!("Cannot determine header row"))
+        Err(anyhow!(
+            "无法定位表头行。请确认第 1 列的表头为「动物编号」或 AnimalID，第 2 列为「性别」或 Sex。"
+        ))
+    }
+}
+
+/// Extract the file name for user-facing messages, falling back to the full path.
+fn file_name_of(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string())
+}
+
+fn ensure_xlsx_extension(path: &str, file_name: &str) -> Result<()> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+
+    match ext.as_str() {
+        "xlsx" | "xlsm" => Ok(()),
+        "xls" => Err(anyhow!(
+            "文件「{file_name}」是旧版 .xls 格式，暂不支持。\n\
+             请在 Excel / WPS 中打开该文件，选择「另存为」→ 格式选择「Excel 工作簿 (.xlsx)」后重新上传。"
+        )),
+        "" => Err(anyhow!(
+            "文件「{file_name}」没有扩展名，无法确认格式。请上传 .xlsx 格式的 Excel 文件。"
+        )),
+        other => Err(anyhow!(
+            "文件「{file_name}」的格式为 .{other}，暂不支持。请上传 .xlsx 格式的 Excel 文件（CSV 请先用 Excel 另存为 .xlsx）。"
+        )),
     }
 }
 
@@ -413,4 +487,67 @@ fn has_chinese_chars(s: &str) -> bool {
         let code = c as u32;
         (0x4E00..=0x9FFF).contains(&code)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_xlsx_and_xlsm() {
+        assert!(ensure_xlsx_extension("/data/raw.xlsx", "raw.xlsx").is_ok());
+        assert!(ensure_xlsx_extension("/data/raw.XLSX", "raw.XLSX").is_ok());
+        assert!(ensure_xlsx_extension("/data/raw.xlsm", "raw.xlsm").is_ok());
+    }
+
+    #[test]
+    fn legacy_xls_is_rejected_with_conversion_hint() {
+        let err = ensure_xlsx_extension("/data/raw.xls", "raw.xls").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("raw.xls"),
+            "message should name the file: {msg}"
+        );
+        assert!(
+            msg.contains("另存为"),
+            "message should tell how to fix: {msg}"
+        );
+    }
+
+    #[test]
+    fn unsupported_and_missing_extensions_are_rejected() {
+        let csv = ensure_xlsx_extension("/data/raw.csv", "raw.csv")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            csv.contains(".csv"),
+            "message should name the format: {csv}"
+        );
+
+        let none = ensure_xlsx_extension("/data/raw", "raw")
+            .unwrap_err()
+            .to_string();
+        assert!(none.contains("扩展名"), "message should explain: {none}");
+    }
+
+    #[test]
+    fn file_name_falls_back_to_full_path() {
+        assert_eq!(file_name_of("/tmp/data/raw.xlsx"), "raw.xlsx");
+        assert_eq!(file_name_of("raw.xlsx"), "raw.xlsx");
+        assert_eq!(file_name_of("/"), "/");
+    }
+
+    #[test]
+    fn missing_file_reports_actionable_message() {
+        let err = parse_excel_file("/definitely/missing/file.xlsx").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("file.xlsx"),
+            "message should name the file: {msg}"
+        );
+        assert!(
+            msg.contains("无法打开"),
+            "message should be in Chinese: {msg}"
+        );
+    }
 }
