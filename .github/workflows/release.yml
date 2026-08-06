@@ -40,6 +40,18 @@ jobs:
       - name: Install frontend dependencies
         run: bun install
 
+      # The runner images no longer ship Apple's intermediate CAs, and the
+      # exported .p12 contains only the leaf certificate, so codesign cannot
+      # build the trust chain without these ("failed to resolve signing
+      # identity"). G1 signs the current certificate; G2 covers renewals.
+      - name: Install Apple intermediate certificates
+        if: matrix.platform == 'macos-latest'
+        run: |
+          curl -sO https://www.apple.com/certificateauthority/DeveloperIDCA.cer
+          curl -sO https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          sudo security import DeveloperIDCA.cer -k /Library/Keychains/System.keychain
+          sudo security import DeveloperIDG2CA.cer -k /Library/Keychains/System.keychain
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
