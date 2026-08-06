@@ -52,6 +52,7 @@ The Rust backend (`src-tauri/src/`) follows a layered architecture:
      - `anova.rs`: One-way & Welch ANOVA
      - `tukey.rs`: Tukey HSD post-hoc test
      - `dunnett.rs`: Dunnett's T3 post-hoc test
+     - `distributions.rs`: Studentized range & maximum modulus (post-hoc P values)
    - `exporter.rs`: Excel export with dual-row headers
 
 3. **Persistence** (`persistence/`): SQLite repositories for config and history
@@ -196,9 +197,13 @@ It asserts, in order:
    (`样本号`, `样品识别号`, `FULLNAME`), matching `src/utils/indicator-filter.ts`
 3. **Grouping** — the winning assignment must match the accepted one animal by animal, with
    all 70 indicators passing at α = 0.05 in Strict mode
-4. **Export** — every cell of all three sheets (`分组结果` / `统计结果` / `汇总信息`).
-   Text compares exactly; numbers compare to a `1e-9` relative tolerance so cross-platform
-   libm differences don't cause false failures. Only the `计算耗时 (ms)` row is skipped.
+4. **Post-hoc** — each of the 70 indicators carries all C(3,2) = 3 pairwise comparisons and
+   all of them clear α, plus a guard that they are not saturated at exactly 1.0 (the
+   signature of the approximation that used to stand in for the studentized range)
+5. **Export** — every cell of all four sheets (`分组结果` / `统计结果` / `事后比较` /
+   `汇总信息`). Text compares exactly; numbers compare to a `1e-9` relative tolerance so
+   cross-platform libm differences don't cause false failures. Only the `计算耗时 (ms)` row
+   is skipped.
 
 **If this test fails, assume the code regressed — not that the fixture is stale.** The failure
 message names the sheet, row, column and both values. Only regenerate the fixture when you
@@ -306,6 +311,13 @@ The export must use **dual-row header format** to match regulatory requirements:
 
 **Never** export single-row headers with "组别 | 动物编号 | 性别" - this is an outdated format.
 
+Sheets written, in order: `分组结果`, then `统计结果` and `事后比较` when
+`include_statistics` is set, then `汇总信息` when `include_summary` is set. `统计结果` keeps
+its five columns (indicator, Levene P, main test P, method, verdict); the pairwise post-hoc
+comparisons live in `事后比较` as one row per (indicator, group pair), which reviewers read
+the way they read a GraphPad multiple-comparisons table. That sheet is omitted entirely for
+two-group designs, which have no post-hoc stage.
+
 See `src-tauri/src/core/exporter.rs` for the canonical implementation.
 
 ### Statistical Engine
@@ -315,12 +327,25 @@ All statistical tests are **pure Rust** implementations (no Python/R dependencie
   - Levene test (mean-centered, i.e. the original Levene — not Brown-Forsythe, despite what
     earlier notes claimed)
   - Welch ANOVA
-  - Tukey HSD (approximated, **not** the studentized range distribution)
-  - Dunnett's T3 (currently unadjusted pairwise Welch t — no multiplicity correction)
+  - Tukey HSD — exact, via the studentized range distribution in `stats/distributions.rs`
+  - Dunnett's T3 — exact, via the studentized maximum modulus correction in the same module
 
-The last two deviate measurably from the textbook tests. Before trusting any post-hoc P value
-for k >= 3 groups, read `.claude/skills/animal-grouping/references/statistics.md` (deviations are
-quantified there) and cross-check with the exact reference implementation:
+`stats/distributions.rs` is a direct port of `srange_sf` / `smm_sf` / `_chi_scale_integral`
+from the Python reference implementation, checked against published critical value tables
+(q₀.₀₅(3,12) = 3.773, q₀.₀₅(4,20) = 3.958, q₀.₀₅(5,10) = 4.654) and against the analytic
+identities at k = 2 / C = 1. On the e2e fixture all 210 pairwise comparisons agree with the
+Python reference to within 1.8e-11. **Do not replace these with a t-distribution
+approximation** — the previous `q/sqrt(2) * k` shortcut pinned every comparison at exactly
+1.000000 on small samples, and the uncorrected Welch t used for T3 returned p-values ~0.2-0.4x
+the true ones. `tukey.rs` and `dunnett.rs` carry regression tests for both failure modes.
+
+Post-hoc p-values cost a quadrature each, so the cascade takes a `PostHocDetail`: the scoring
+pass asks for `ValidityOnly` (a cached critical value for Tukey, a bounds-based shortcut for
+T3) and only the reported Top-N candidates compute `Exact` values. Both routes give the same
+verdict by construction; `tukey_all_valid_agrees_with_exact_p_values` and its Dunnett twin
+guard that.
+
+For any doubt about a specific P value, cross-check with the exact reference implementation:
 `python3 .claude/skills/animal-grouping/scripts/grouping_engine.py verify --help`.
 
 ### Performance Characteristics

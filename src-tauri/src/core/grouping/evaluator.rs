@@ -134,7 +134,12 @@ fn run_indicator_tests(
 
     // Groups that participate in the statistics (reserve groups are excluded).
     // Groups without a matching constraint default to experimental.
-    let experimental: Vec<&Vec<usize>> = candidate
+    //
+    // The original `group_id` is kept alongside each group: the statistics see a compacted
+    // list, so a post-hoc comparison between experimental groups 0 and 1 may refer to
+    // `group_id` 0 and 2 once a reserve group sits between them. Reporting the compacted
+    // index would mislabel every comparison in that layout.
+    let experimental: Vec<(usize, &Vec<usize>)> = candidate
         .groups
         .iter()
         .enumerate()
@@ -146,7 +151,6 @@ fn run_indicator_tests(
                 .unwrap_or(true),
             None => true,
         })
-        .map(|(_, animal_indices)| animal_indices)
         .collect();
 
     // One value buffer per experimental group, reused across indicators and candidates so
@@ -155,10 +159,18 @@ fn run_indicator_tests(
         scratch.groups.resize_with(experimental.len(), Vec::new);
     }
 
+    // Exact post-hoc p-values are only needed for candidates whose detail is actually
+    // reported; the scoring pass just needs to know whether they all clear alpha.
+    let detail = if collect.is_some() {
+        stats::PostHocDetail::Exact
+    } else {
+        stats::PostHocDetail::ValidityOnly
+    };
+
     // For each selected indicator, compute P-value
     for indicator_name in &stat_config.selected_indicators {
         // Extract indicator values for each experimental group
-        for (buffer, animal_indices) in scratch.groups.iter_mut().zip(&experimental) {
+        for (buffer, (_, animal_indices)) in scratch.groups.iter_mut().zip(&experimental) {
             buffer.clear();
             buffer.extend(
                 animal_indices.iter().filter_map(|&idx| {
@@ -175,6 +187,7 @@ fn run_indicator_tests(
         let test = stats::compute_indicator_test(
             &scratch.groups,
             stat_config.alpha,
+            detail,
             &mut scratch.posthoc,
         )?;
 
@@ -200,8 +213,8 @@ fn run_indicator_tests(
                         .posthoc
                         .iter()
                         .map(|&(g1, g2, p)| PostHocComparison {
-                            group1_id: g1,
-                            group2_id: g2,
+                            group1_id: experimental[g1].0,
+                            group2_id: experimental[g2].0,
                             p_value: p,
                             is_valid: p > stat_config.alpha,
                         })

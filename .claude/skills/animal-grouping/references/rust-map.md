@@ -13,7 +13,8 @@
 | `src/core/grouping/evaluator.rs` | 单候选评估：逐指标检验、备用组排除、汇总 | 纯函数，被 `rayon` 并行调用，禁止引入可变共享状态 |
 | `src/core/grouping/mod.rs` | 编排：枚举 → 并行评估 → 过滤 → 排序 → Top-N | 排序键在这里（min_p 降序，mean_p 次之） |
 | `src/core/stats/*` | Levene / t / ANOVA / Tukey / Dunnett | 见 `statistics.md` |
-| `src/core/exporter.rs` | 双行表头 Excel 导出 | 表头格式是交付要求，不要退回单行 |
+| `src/core/stats/distributions.rs` | studentized range / maximum modulus（事后 P 值的精确分布） | `grouping_engine.py` 的直接移植，改动要两侧同步；别换回 t 分布近似 |
+| `src/core/exporter.rs` | 双行表头 Excel 导出 + `事后比较` sheet | 表头格式是交付要求，不要退回单行；事后比较表只在 ≥3 组时生成 |
 | `src/commands/grouping.rs` | Tauri 命令入口 | 新命令要在 `lib.rs` 的 `invoke_handler!` 注册 |
 
 数据流：`parse_excel` → `Dataset` →（前端配置）→ `compute_grouping` →

@@ -1,5 +1,7 @@
 use anyhow::Result;
 
+use super::distributions::{srange_crit, srange_sf};
+
 /// Tukey's Honest Significant Difference (HSD) test
 /// Post-hoc test for ANOVA when variances are equal
 /// Returns pairwise comparisons: Vec of (group1_idx, group2_idx, p_value)
@@ -11,77 +13,85 @@ pub fn tukey_hsd(groups: &[Vec<f64>]) -> Result<Vec<(usize, usize, f64)>> {
 
 /// Same as [`tukey_hsd`] but appends into a caller-owned buffer, so hot loops can
 /// reuse one allocation across indicators and candidates.
+///
+/// P-values come from the studentized range distribution, which is the only correct source
+/// for Tukey HSD. Each one costs a quadrature, so prefer [`tukey_all_valid`] when only the
+/// pass/fail verdict is needed.
 pub fn tukey_hsd_into(groups: &[Vec<f64>], results: &mut Vec<(usize, usize, f64)>) -> Result<()> {
-    if groups.len() < 2 {
+    let k = groups.len();
+    if k < 2 {
         return Err(anyhow::anyhow!("Need at least 2 groups for Tukey HSD"));
     }
 
-    let k = groups.len();
+    let (group_stats, mse, df_within) = pooled_within(groups);
 
-    // Calculate group means and sizes
-    let group_stats: Vec<(f64, usize)> = groups
-        .iter()
-        .map(|g| {
-            let n = g.len();
-            let mean = g.iter().sum::<f64>() / n as f64;
-            (mean, n)
-        })
-        .collect();
-
-    // Calculate pooled within-group variance (MSE)
-    let mut ss_within = 0.0;
-    let mut df_within = 0;
-
-    for (i, group) in groups.iter().enumerate() {
-        let mean = group_stats[i].0;
-        for &x in group {
-            ss_within += (x - mean).powi(2);
-        }
-        df_within += group.len() - 1;
-    }
-
-    let mse = ss_within / df_within as f64;
-
-    // Pairwise comparisons
     for i in 0..k {
         for j in (i + 1)..k {
-            let (mean_i, n_i) = group_stats[i];
-            let (mean_j, n_j) = group_stats[j];
-
-            // Tukey's Q statistic
-            let se = (mse * (1.0 / n_i as f64 + 1.0 / n_j as f64) / 2.0).sqrt();
-            let q_stat = (mean_i - mean_j).abs() / se;
-
-            // P-value from Studentized Range distribution
-            // Note: statrs may not have StudRangeDistribution, use conservative approximation
-            let p_value = tukey_q_to_p(q_stat, k, df_within);
-
-            results.push((i, j, p_value));
+            let q_stat = q_statistic(mse, group_stats[i], group_stats[j]);
+            results.push((i, j, srange_sf(q_stat, k, df_within)));
         }
     }
 
     Ok(())
 }
 
-/// Convert Tukey's Q statistic to P-value
-/// Uses conservative approximation based on Studentized Range distribution
-fn tukey_q_to_p(q_stat: f64, num_groups: usize, df: usize) -> f64 {
-    // Conservative approximation: treat Q as approximately chi-square distributed
-    // For more accurate implementation, would need qtukey distribution tables
+/// Whether every pairwise comparison clears `alpha`, without computing exact p-values.
+///
+/// The studentized range tail is monotone decreasing in `q`, so comparing against the cached
+/// critical value gives exactly the same verdict as `srange_sf(q, k, df) > alpha` — at the
+/// cost of one bisection per `(alpha, k, df)` for a whole run instead of one quadrature per
+/// comparison. This is what keeps the scoring pass affordable over 10^5+ candidates.
+pub fn tukey_all_valid(groups: &[Vec<f64>], alpha: f64) -> Result<bool> {
+    let k = groups.len();
+    if k < 2 {
+        return Err(anyhow::anyhow!("Need at least 2 groups for Tukey HSD"));
+    }
 
-    // Simple approximation: convert to approximate t-statistic
-    let t_approx = q_stat / std::f64::consts::SQRT_2;
+    let (group_stats, mse, df_within) = pooled_within(groups);
+    let crit = srange_crit(alpha, k, df_within);
 
-    // Use two-tailed t-distribution as approximation
-    // This is conservative (tends to give higher P-values)
-    use statrs::distribution::{ContinuousCDF, StudentsT};
+    for i in 0..k {
+        for j in (i + 1)..k {
+            let q_stat = q_statistic(mse, group_stats[i], group_stats[j]);
+            // False for a NaN q (degenerate zero-variance data), which is the intended
+            // "not valid" outcome and matches how the exact path treats a NaN p-value.
+            let passes = q_stat < crit;
+            if !passes {
+                return Ok(false);
+            }
+        }
+    }
 
-    let t_dist = StudentsT::new(0.0, 1.0, df as f64).unwrap();
-    let p_one_tail = 1.0 - t_dist.cdf(t_approx);
-    let p_value = 2.0 * p_one_tail * num_groups as f64; // Bonferroni-like adjustment
+    Ok(true)
+}
 
-    // Clamp to [0, 1]
-    p_value.min(1.0).max(0.0)
+/// Group `(mean, n)` pairs, the pooled within-group mean square, and its degrees of freedom.
+///
+/// Shared by the exact and the validity-only paths so the two cannot drift apart.
+fn pooled_within(groups: &[Vec<f64>]) -> (Vec<(f64, usize)>, f64, f64) {
+    let group_stats: Vec<(f64, usize)> = groups
+        .iter()
+        .map(|g| {
+            let n = g.len();
+            (g.iter().sum::<f64>() / n as f64, n)
+        })
+        .collect();
+
+    let mut ss_within = 0.0;
+    let mut df_within = 0usize;
+
+    for (group, &(mean, _)) in groups.iter().zip(&group_stats) {
+        ss_within += group.iter().map(|x| (x - mean).powi(2)).sum::<f64>();
+        df_within += group.len() - 1;
+    }
+
+    (group_stats, ss_within / df_within as f64, df_within as f64)
+}
+
+/// Tukey's q statistic for one pair of groups.
+fn q_statistic(mse: f64, (mean_i, n_i): (f64, usize), (mean_j, n_j): (f64, usize)) -> f64 {
+    let se = (mse * (1.0 / n_i as f64 + 1.0 / n_j as f64) / 2.0).sqrt();
+    (mean_i - mean_j).abs() / se
 }
 
 #[cfg(test)]
@@ -107,6 +117,89 @@ mod tests {
             println!("Group {i} vs {j}: P = {p}");
             assert!(p > &0.05, "Expected high P-value for similar groups");
         }
+    }
+
+    /// The fast verdict must match the exact p-values everywhere, since the scoring pass uses
+    /// the former to rank candidates and the export reports the latter.
+    #[test]
+    fn tukey_all_valid_agrees_with_exact_p_values() {
+        let cases = [
+            vec![
+                vec![1.0, 2.0, 3.0, 4.0, 5.0],
+                vec![1.5, 2.5, 3.5, 4.5, 5.5],
+                vec![1.2, 2.2, 3.2, 4.2, 5.2],
+            ],
+            vec![
+                vec![1.0, 1.1, 1.2, 1.3, 1.4],
+                vec![1.5, 1.6, 1.7, 1.8, 1.9],
+                vec![10.0, 10.1, 10.2, 10.3, 10.4],
+            ],
+            // Deliberately near the alpha = 0.05 boundary.
+            vec![
+                vec![1.0, 2.0, 3.0],
+                vec![3.4, 4.4, 5.4],
+                vec![2.2, 3.2, 4.2],
+            ],
+            vec![
+                vec![10.0, 12.0, 11.0, 13.0],
+                vec![14.0, 16.0, 15.0, 17.0],
+                vec![11.0, 13.0, 12.0, 14.0],
+                vec![12.0, 14.0, 13.0, 15.0],
+            ],
+        ];
+
+        for groups in &cases {
+            for alpha in [0.01, 0.05, 0.1] {
+                let exact = tukey_hsd(groups).unwrap();
+                let expected = exact.iter().all(|&(_, _, p)| p > alpha);
+                assert_eq!(
+                    tukey_all_valid(groups, alpha).unwrap(),
+                    expected,
+                    "verdict disagreed with exact p-values {exact:?} at alpha = {alpha}"
+                );
+            }
+        }
+    }
+
+    /// Published critical value: q_0.05(3, 6) = 4.339. A q just under it must pass, just over
+    /// it must fail. The old `q/sqrt(2)` approximation put this threshold at 4.649 and let
+    /// genuinely imbalanced pairs through.
+    #[test]
+    fn tukey_p_values_track_the_published_critical_value() {
+        // Three groups of three, unit MSE by construction: q = |mean_i - mean_j| / (1/sqrt(3)).
+        let build = |shift: f64| {
+            vec![
+                vec![-1.0, 0.0, 1.0],
+                vec![-1.0 + shift, shift, 1.0 + shift],
+                vec![-1.0, 0.0, 1.0],
+            ]
+        };
+
+        let mse = 1.0; // each group has variance 1
+        let se = (mse * (1.0 / 3.0 + 1.0 / 3.0) / 2.0f64).sqrt();
+
+        let below = build(4.30 * se);
+        let above = build(4.40 * se);
+
+        assert!(tukey_all_valid(&below, 0.05).unwrap(), "q = 4.30 < 4.339");
+        assert!(!tukey_all_valid(&above, 0.05).unwrap(), "q = 4.40 > 4.339");
+    }
+
+    /// Regression guard for the old approximation, which multiplied a t-tail by k and clamped
+    /// to 1.0, saturating every comparison on small samples.
+    #[test]
+    fn tukey_p_values_are_not_saturated_on_small_samples() {
+        let groups = vec![
+            vec![1.0, 2.0, 3.5],
+            vec![1.4, 2.6, 3.1],
+            vec![0.8, 2.1, 3.9],
+        ];
+
+        let results = tukey_hsd(&groups).unwrap();
+        assert!(
+            results.iter().all(|&(_, _, p)| p < 1.0),
+            "post-hoc p-values collapsed to 1.0: {results:?}"
+        );
     }
 
     #[test]

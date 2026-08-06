@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { useAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { resultAtom, setErrorAtom, datasetAtom, selectedIndicatorsAtom, resetStateAtom, groupConfigAtom } from "@/stores";
+import { resultAtom, setErrorAtom, datasetAtom, selectedIndicatorsAtom, resetStateAtom, groupConfigAtom, statConfigAtom } from "@/stores";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -27,6 +27,7 @@ export function ResultsPage() {
   const [result] = useAtom(resultAtom);
   const [dataset] = useAtom(datasetAtom);
   const [groupConfig] = useAtom(groupConfigAtom);
+  const [statConfig] = useAtom(statConfigAtom);
   const [selectedIndicators] = useAtom(selectedIndicatorsAtom);
   const [, setError] = useAtom(setErrorAtom);
   const [, resetState] = useAtom(resetStateAtom);
@@ -124,6 +125,21 @@ export function ResultsPage() {
       };
     })
     .sort((a, b) => a.group_index - b.group_index);
+
+  const alpha = statConfig?.alpha ?? 0.05;
+  const groupLabels = new Map(groups.map((g) => [g.group_index, g.label]));
+  const labelFor = (groupId: number) => groupLabels.get(groupId) ?? `第 ${groupId + 1} 组`;
+
+  // Pairwise post-hoc comparisons, flattened for display. Empty for two-group designs,
+  // which have no post-hoc stage.
+  const posthocRows = statistics.flatMap((stat) =>
+    (stat.posthoc_results ?? []).map((comparison) => ({
+      key: `${stat.indicator_name}-${comparison.group1_id}-${comparison.group2_id}`,
+      indicator_name: stat.indicator_name,
+      test_method: stat.test_method,
+      ...comparison,
+    }))
+  );
 
   return (
     <div className="container max-w-7xl mx-auto py-8 space-y-6">
@@ -232,14 +248,21 @@ export function ResultsPage() {
                   <TableHead>指标名称</TableHead>
                   <TableHead className="text-center">Levene P值</TableHead>
                   <TableHead className="text-center">差异检验 P值</TableHead>
+                  <TableHead className="text-center">最严格两两比较</TableHead>
                   <TableHead className="text-center">状态</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {statistics.map((stat) => {
-                  const levenePassed = stat.levene_p_value > 0.05;
-                  const diffPassed = stat.diff_p_value > 0.05;
-                  const overallPassed = levenePassed && diffPassed;
+                  // Levene only selects which test to run; it is not a pass/fail criterion.
+                  // The verdict comes from the backend, which applies the full rule:
+                  // main test P > alpha AND every pairwise comparison P > alpha.
+                  const levenePassed = stat.levene_p_value > alpha;
+                  const diffPassed = stat.diff_p_value > alpha;
+                  const comparisons = stat.posthoc_results ?? [];
+                  const worstPosthoc = comparisons.length
+                    ? comparisons.reduce((a, b) => (b.p_value < a.p_value ? b : a))
+                    : null;
 
                   return (
                     <TableRow key={stat.indicator_name}>
@@ -265,7 +288,26 @@ export function ResultsPage() {
                         </span>
                       </TableCell>
                       <TableCell className="text-center">
-                        {overallPassed ? (
+                        {worstPosthoc ? (
+                          <span
+                            className={
+                              worstPosthoc.is_valid
+                                ? "text-green-600"
+                                : "text-amber-600"
+                            }
+                          >
+                            {worstPosthoc.p_value.toFixed(4)}
+                            <span className="ml-1 text-xs text-muted-foreground">
+                              {labelFor(worstPosthoc.group1_id)}/
+                              {labelFor(worstPosthoc.group2_id)}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {stat.is_valid ? (
                           <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
                             通过
                           </span>
@@ -285,17 +327,83 @@ export function ResultsPage() {
           {/* Legend */}
           <div className="mt-4 text-sm text-muted-foreground">
             <p>
-              • <strong>Levene检验</strong>: P &gt; 0.05 表示方差齐性良好
+              • <strong>Levene检验</strong>: P &gt; {alpha} 表示方差齐性良好，决定采用哪种差异检验
             </p>
             <p>
-              • <strong>差异检验</strong>: P &gt; 0.05 表示组间无显著差异
+              • <strong>差异检验</strong>: P &gt; {alpha} 表示组间整体无显著差异
             </p>
             <p>
-              • <strong>通过</strong>: 两项检验均 P &gt; 0.05
+              • <strong>最严格两两比较</strong>: 该指标所有组间两两比较中 P 值最小的一对
+            </p>
+            <p>
+              • <strong>通过</strong>: 差异检验与全部两两比较的 P 均 &gt; {alpha}
             </p>
           </div>
         </CardContent>
       </Card>
+
+      {/* Pairwise post-hoc comparisons */}
+      {posthocRows.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>组间两两比较</CardTitle>
+            <CardDescription>
+              整体差异检验之外，每一对实验组之间的事后检验 P 值（Tukey HSD / Dunnett's T3），
+              共 {posthocRows.length} 组比较
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="rounded-md border max-h-[32rem] overflow-y-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>指标名称</TableHead>
+                    <TableHead>比较对</TableHead>
+                    <TableHead>检验方法</TableHead>
+                    <TableHead className="text-center">P值</TableHead>
+                    <TableHead className="text-center">状态</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {posthocRows.map((row) => (
+                    <TableRow key={row.key}>
+                      <TableCell className="font-medium">
+                        {row.indicator_name}
+                      </TableCell>
+                      <TableCell>
+                        {labelFor(row.group1_id)} vs. {labelFor(row.group2_id)}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {row.test_method}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <span
+                          className={
+                            row.is_valid ? "text-green-600" : "text-amber-600"
+                          }
+                        >
+                          {row.p_value.toFixed(4)}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {row.is_valid ? (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                            ns
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                            显著
+                          </span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Action Buttons */}
       <div className="flex justify-between">

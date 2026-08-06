@@ -65,12 +65,24 @@ export interface GroupAssignment {
   group_id: number;
 }
 
+/** One pairwise post-hoc comparison. Only produced for designs with >= 3 groups. */
+export interface PostHocComparison {
+  /** Group ids as used by `GroupAssignment.group_id`, not compacted indices. */
+  group1_id: number;
+  group2_id: number;
+  p_value: number;
+  is_valid: boolean;
+}
+
 export interface IndicatorStats {
   indicator_name: string;
   levene_p_value: number;
   diff_p_value: number;
   test_method: string;
+  /** Main test P > alpha AND every pairwise post-hoc comparison P > alpha. */
   is_valid: boolean;
+  /** Absent for two-group designs, which have no post-hoc stage. */
+  posthoc_results?: PostHocComparison[] | null;
 }
 
 export interface ResultSummary {

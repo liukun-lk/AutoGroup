@@ -118,6 +118,44 @@ fn end_to_end_matches_accepted_export() {
         );
     }
 
+    // Every indicator carries the full set of pairwise post-hoc comparisons, and all of them
+    // must clear alpha for the grouping to be valid. A saturated column (every P exactly
+    // 1.0) means the post-hoc distribution regressed to an approximation and is not testing
+    // anything — that is what the last assertion guards.
+    for stat in &result.statistics {
+        let comparisons = stat.posthoc_results.as_ref().unwrap_or_else(|| {
+            panic!(
+                "indicator {} lost its post-hoc results",
+                stat.indicator_name
+            )
+        });
+
+        assert_eq!(
+            comparisons.len(),
+            3,
+            "indicator {}: expected C(3,2) = 3 pairwise comparisons",
+            stat.indicator_name
+        );
+        assert!(
+            comparisons.iter().all(|c| c.is_valid),
+            "indicator {} has a failing pairwise comparison: {:?}",
+            stat.indicator_name,
+            comparisons
+        );
+    }
+
+    let saturated = result
+        .statistics
+        .iter()
+        .flat_map(|s| s.posthoc_results.iter().flatten())
+        .filter(|c| c.p_value >= 1.0)
+        .count();
+    assert!(
+        saturated < 20,
+        "{saturated} post-hoc p-values are pinned at 1.0; the studentized range distribution \
+         has likely been replaced by an approximation again"
+    );
+
     // --- Stage 3: export ------------------------------------------------------------
     let output_dir = std::env::temp_dir().join("autogroup_e2e");
     std::fs::create_dir_all(&output_dir).expect("temp dir");

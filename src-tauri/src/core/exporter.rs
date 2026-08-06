@@ -68,6 +68,15 @@ pub fn export_grouping_result(
     // Sheet 2: Statistics (统计结果)
     if config.include_statistics {
         write_statistics_sheet(&mut workbook, result)?;
+
+        // Sheet 2b: Pairwise post-hoc comparisons (事后比较), only for >= 3 groups
+        if has_posthoc_results(result) {
+            let sheet = workbook.add_worksheet();
+            sheet
+                .set_name("事后比较")
+                .context("Failed to set sheet name")?;
+            write_posthoc_sheet_to(sheet, result, config)?;
+        }
     }
 
     // Sheet 3: Summary (汇总信息)
@@ -111,6 +120,18 @@ pub fn export_multiple_results(
                 .with_context(|| format!("Failed to set stats sheet name for candidate {rank}"))?;
 
             write_statistics_sheet_to(stats_sheet, result)?;
+
+            // Sheet: Candidate N - Post-hoc comparisons
+            if has_posthoc_results(result) {
+                let posthoc_sheet = workbook.add_worksheet();
+                posthoc_sheet
+                    .set_name(format!("方案{rank}-事后比较"))
+                    .with_context(|| {
+                        format!("Failed to set post-hoc sheet name for candidate {rank}")
+                    })?;
+
+                write_posthoc_sheet_to(posthoc_sheet, result, config)?;
+            }
         }
     }
 
@@ -334,6 +355,77 @@ fn write_statistics_sheet_to(
     sheet.set_column_width(1, 12)?;
     sheet.set_column_width(2, 14)?;
     sheet.set_column_width(3, 20)?;
+    sheet.set_column_width(4, 10)?;
+
+    Ok(())
+}
+
+/// Whether any indicator carries pairwise post-hoc comparisons.
+///
+/// Two-group designs have no post-hoc stage, so the sheet is omitted entirely rather than
+/// exported empty.
+fn has_posthoc_results(result: &GroupingResult) -> bool {
+    result
+        .statistics
+        .iter()
+        .any(|stat| stat.posthoc_results.as_ref().is_some_and(|p| !p.is_empty()))
+}
+
+/// Label for a group, matching the one used by the grouping sheet.
+fn group_label(config: &SheetConfig, group_id: usize) -> String {
+    config
+        .group_constraints
+        .as_ref()
+        .and_then(|constraints| constraints.iter().find(|c| c.group_index == group_id))
+        .and_then(|c| c.custom_name.clone())
+        .unwrap_or_else(|| format!("组{}", group_id + 1))
+}
+
+/// Write the pairwise post-hoc comparison sheet.
+///
+/// One row per (indicator, group pair). The main test only says whether the groups differ
+/// *somewhere*; reviewers additionally want to see that no individual pair differs, which is
+/// what the validity rule already requires (`P_main > alpha` AND every pairwise `P > alpha`).
+fn write_posthoc_sheet_to(
+    sheet: &mut rust_xlsxwriter::Worksheet,
+    result: &GroupingResult,
+    config: &SheetConfig,
+) -> Result<()> {
+    let header_format = Format::new().set_bold();
+    sheet.write_string_with_format(0, 0, "指标名称", &header_format)?;
+    sheet.write_string_with_format(0, 1, "比较对", &header_format)?;
+    sheet.write_string_with_format(0, 2, "检验方法", &header_format)?;
+    sheet.write_string_with_format(0, 3, "事后比较 P 值", &header_format)?;
+    sheet.write_string_with_format(0, 4, "是否达标", &header_format)?;
+
+    let mut row = 1u32;
+    for stat in &result.statistics {
+        let Some(comparisons) = stat.posthoc_results.as_ref() else {
+            continue;
+        };
+
+        for comparison in comparisons {
+            sheet.write_string(row, 0, &stat.indicator_name)?;
+            sheet.write_string(
+                row,
+                1,
+                format!(
+                    "{} vs. {}",
+                    group_label(config, comparison.group1_id),
+                    group_label(config, comparison.group2_id)
+                ),
+            )?;
+            sheet.write_string(row, 2, &stat.test_method)?;
+            sheet.write_number(row, 3, comparison.p_value)?;
+            sheet.write_string(row, 4, if comparison.is_valid { "✓" } else { "✗" })?;
+            row += 1;
+        }
+    }
+
+    sheet.set_column_width(0, 15)?;
+    sheet.set_column_width(1, 18)?;
+    sheet.set_column_width(2, 24)?;
+    sheet.set_column_width(3, 16)?;
     sheet.set_column_width(4, 10)?;
 
     Ok(())

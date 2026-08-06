@@ -54,64 +54,59 @@ Bonferroni 之类的替代都会引入方向不定的偏差（见 §3）。
 **studentized maximum modulus** 分布（C = k(k−1)/2 个比较）做多重性校正。
 没有这一步校正就不是 T3，只是裸的两两 Welch t 检验。
 
-## 3. 已量化的 Rust 偏差
+## 3. Rust 与精确实现的一致性
 
-用同一份真实测试数据（`docs/通用动物实验自动分组软件_测试用数据.xlsx`，9 只，6 雄 3 雌）
-对比 Rust `cargo test --lib real_data_test -- --ignored` 与 Python `verify` 的结果：
+**当前状态：两侧在所有检验上一致，Rust 的结果可以直接采信。**
 
-**完全一致**（6 位小数逐项相同）：xlsx 解析出的指标 key、候选枚举数量（60 / 540）、
-Levene P、Student/Welch t 的 P、One-way / Welch ANOVA 的 P、min(P)/mean(P) 排序、最佳划分。
-也就是说 **2 组场景下 Rust 与精确实现没有差别**，可以直接信任。
+`src/core/stats/distributions.rs` 是 `grouping_engine.py` 里 `srange_sf` / `smm_sf` /
+`_chi_scale_integral` 的直接移植（同样的 Gauss-Legendre 求积、同样的 per-k 插值表），
+Tukey 与 Dunnett's T3 因此都走精确分布。实测：
 
-**有偏差**（只在 k ≥ 3 的事后检验上）：
+- e2e 固定数据（9 只，3 组，70 指标）的全部 **210 个两两比较**，Rust 与 Python 的
+  最大绝对偏差 **1.79e-11**，达标判定 0 处不一致。
+- 公开临界值表：q₀.₀₅(3,12) = 3.773、q₀.₀₅(4,20) = 3.958、q₀.₀₅(5,10) = 4.654，
+  Rust 侧 `srange_crit` 三项全部命中（`srange_crit_matches_published_tables`）。
+- 解析式恒等：studentized range 在 k = 2 时退化为双尾 t(q/√2)，studentized maximum
+  modulus 在 C = 1 时退化为双尾 t，两条恒等式都有单元测试钉住。
 
-*Tukey HSD*（`tukey.rs::tukey_q_to_p`）—— Rust 把 q 折算成 `t = q/√2` 后取双尾 t 概率再乘以 k
-并截到 [0,1]。偏差方向随 k 反转，不是代码注释所说的"保守近似"：
+Levene P、Student/Welch t、One-way / Welch ANOVA、min(P)/mean(P) 排序、候选枚举数量
+本来就逐项一致，未受影响。
 
-| k | df | q | 精确 P | Rust P | 比值 |
-|---|---|---|---|---|---|
-| 3 | 6 | 3.0 | 0.16546 | 0.23442 | 1.42（偏松） |
-| 3 | 12 | 4.0 | 0.03764 | 0.04566 | 1.21（偏松） |
-| 4 | 8 | 5.0 | 0.03139 | 0.03068 | 0.98 |
-| 5 | 15 | 4.0 | 0.08046 | 0.06354 | 0.79（偏严） |
-| 5 | 15 | 5.0 | 0.02139 | 0.01498 | 0.70（偏严） |
+### 曾经的偏差（2026-08 之前，已修复）
 
-在实际数据上后果更极端：3 组、每组 3 只（df_within = 6）时，乘 k 后几乎所有比较都被截到
-**恰好 1.000000**（Rust 输出的 21 个两两比较全是 1.0，精确值分布在 0.656–0.9997）。
-事后检验此时形同虚设——`is_valid` 实际只由 ANOVA 的 P 决定。
+历史上这两个事后检验是近似实现，留档以便识别回归：
 
-比 P 值倍数更能说明后果的是**判定门槛**，因为真正要担心的是"会不会把真实失衡的组对放过去"。
-α = 0.05 下，精确临界值与 Rust 实际生效的门槛（解 `min(1, k·t₂(q/√2, df)) = 0.05`）：
+- *Tukey HSD* 用 `t = q/√2` 的双尾 t 概率乘以 k 再截到 [0,1]。3 组每组 3 只
+  （df_within = 6）时 21 个比较**全部饱和成 1.000000**（精确值分布在 0.656–0.9997），
+  事后检验形同虚设；判定门槛被抬到 q = 4.649，而精确临界值是 4.339，
+  q ∈ [4.34, 4.65] 的组对会被误判为通过。
+- *Dunnett's T3* 返回未校正的两两 Welch t 双尾 P，P 值只有真值的 0.20–0.43 倍，
+  会把合格方案判为不合格。
 
-| k | df | 精确 q₀.₀₅ | Rust 生效门槛 | 误判窗口 |
-|---|---|---|---|---|
-| 3 | 6 | 4.3392 | 4.6492 | q ∈ [4.34, 4.65] 会被误判为通过 |
-| 3 | 12 | 3.7729 | 3.9308 | q ∈ [3.77, 3.93] |
-| 4 | 8 | 4.5288 | 4.5339 | 几乎重合 |
+修复后在 e2e 数据上的可观测变化：3 组 × 每组 5 只的性能用例里合格候选从 123540 降到
+119124（−3.6%），正是原先落在误判窗口里的那些；最优划分与导出的前三张 sheet 逐格未变。
 
-也就是说 3 组小样本时窗口最宽。项目测试数据恰好没有候选落进这个窗口（540 个候选用两种算法
-筛出的合格数都是 534），所以现有结论没被改变——但这是数据碰巧，不是算法保证。
+`tukey.rs::tukey_p_values_are_not_saturated_on_small_samples` 与
+`dunnett.rs::dunnett_t3_is_more_conservative_than_bare_welch_t` 分别守着这两种回归。
 
-**交付物暴露面**：`exporter.rs::write_statistics_sheet_to` 只写指标名、Levene P、差异检验 P、
-检验方法、是否达标五列，导出的 xlsx **不含事后比较**。所以这两处偏差只影响界面显示与结果
-JSON，不会污染导出文件——回答"能不能交付"时这一点决定了是"替换界面数字"还是"重新导出"。
+### 性能与判定路径
 
-*Dunnett's T3*（`dunnett.rs`）—— Rust 返回未校正的两两 Welch t 双尾 P，缺 studentized
-maximum modulus 校正，P 值系统性偏小，把合格方案判为不合格：
+精确 P 值每个都要做一次数值积分，不能在 10^5 量级的评分循环里逐候选算。按算法契约，
+**排序只看主检验 P，事后比较只影响 `is_valid`**，所以 `compute_indicator_test` 接受一个
+`PostHocDetail`：
 
-| C | df | t | 精确 P | Rust P | 比值 |
-|---|---|---|---|---|---|
-| 3 | 4 | 2.5 | 0.15961 | 0.06677 | 0.42 |
-| 3 | 8 | 3.0 | 0.04698 | 0.01707 | 0.36 |
-| 6 | 10 | 2.5 | 0.15381 | 0.03145 | 0.20 |
+- `ValidityOnly`（评分阶段）——Tukey 拿缓存的 `srange_crit(alpha, k, df)` 与 q 比大小；
+  T3 用「单个未校正 t（下界）/ Bonferroni 倍数（上界）」夹逼，只有落进窗口的比较才做积分
+  （T3 的 Welch df 每对都不同，没有可缓存的临界值）。
+- `Exact`（Top-N 上报）——真正算 `srange_sf` / `smm_sf`。
 
-即 3 组时 Rust 的事后 P 只有真值的约 0.35–0.43 倍，4 组时约 0.2 倍。α = 0.05 下，
-一个真实 P = 0.10 的比较会被 Rust 报成 0.04 并判为失衡。
+两条路径的判定结果按构造完全相同（临界值是尾概率的反函数，夹逼是严格不等式），
+`tukey_all_valid_agrees_with_exact_p_values` / `dunnett_all_valid_agrees_with_exact_p_values` /
+`smm_exceeds_agrees_with_exact_tail` 逐点验证了这一点。改这里时别让两条路径分叉——
+一旦分叉，候选会以"合格"入选，却报出一个不达标的比较。
 
-**结论**：k = 2 用 Rust 结果即可；k ≥ 3 且要对外交付（报告、审计、监管材料）时，
-用 `verify --compare` 复核事后检验。修 Rust 时，两处的正确做法分别是接入
-studentized range 与 studentized maximum modulus 分布——`grouping_engine.py`
-里的 `srange_sf` / `smm_sf` 是可移植的参考（纯数值积分，无外部依赖）。
+**交付物暴露面**：导出的 xlsx 现在包含 `事后比较` sheet（每行一个「指标 × 组对」），
+所以事后 P 值会直接进入交付文件——这也是它必须精确的原因。
 
 ## 4. 参考实现如何保证精度
 
