@@ -5,6 +5,14 @@ use statrs::distribution::{ContinuousCDF, StudentsT};
 /// Post-hoc test for Welch ANOVA when variances are unequal
 /// Returns pairwise comparisons: Vec of (group1_idx, group2_idx, p_value)
 pub fn dunnett_t3(groups: &[Vec<f64>]) -> Result<Vec<(usize, usize, f64)>> {
+    let mut results = Vec::new();
+    dunnett_t3_into(groups, &mut results)?;
+    Ok(results)
+}
+
+/// Same as [`dunnett_t3`] but appends into a caller-owned buffer, so hot loops can
+/// reuse one allocation across indicators and candidates.
+pub fn dunnett_t3_into(groups: &[Vec<f64>], results: &mut Vec<(usize, usize, f64)>) -> Result<()> {
     if groups.len() < 2 {
         return Err(anyhow::anyhow!("Need at least 2 groups for Dunnett's T3"));
     }
@@ -23,8 +31,6 @@ pub fn dunnett_t3(groups: &[Vec<f64>]) -> Result<Vec<(usize, usize, f64)>> {
         .collect();
 
     // Pairwise comparisons
-    let mut results = Vec::new();
-
     for i in 0..k {
         for j in (i + 1)..k {
             let (mean_i, var_i, n_i) = group_stats[i];
@@ -46,7 +52,7 @@ pub fn dunnett_t3(groups: &[Vec<f64>]) -> Result<Vec<(usize, usize, f64)>> {
         }
     }
 
-    Ok(results)
+    Ok(())
 }
 
 /// Calculate Welch-Satterthwaite degrees of freedom

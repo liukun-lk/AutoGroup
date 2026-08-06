@@ -1,6 +1,52 @@
 use crate::core::{models::*, stats};
 use anyhow::Result;
-use std::collections::HashMap;
+
+/// Ranking-relevant summary of one candidate grouping.
+///
+/// Deliberately allocation-free: the engine computes one of these for every candidate
+/// (up to hundreds of thousands per run) and only materializes the full
+/// [`GroupingResult`] for the handful of candidates that actually win.
+#[derive(Debug, Clone, Copy)]
+pub struct CandidateScore {
+    pub min_p_value: f64,
+    pub mean_p_value: f64,
+    pub num_invalid_indicators: usize,
+    pub total_indicators: usize,
+}
+
+impl CandidateScore {
+    pub fn meets_criteria(&self, mode: OptimizationMode) -> bool {
+        match mode {
+            OptimizationMode::Strict => self.num_invalid_indicators == 0,
+            OptimizationMode::Optimized => self.num_invalid_indicators <= 1,
+        }
+    }
+}
+
+/// Scratch buffers reused across candidates to keep the hot loop allocation-free.
+#[derive(Default)]
+pub struct EvalScratch {
+    groups: Vec<Vec<f64>>,
+    posthoc: Vec<(usize, usize, f64)>,
+}
+
+/// Score a candidate without building any per-indicator detail.
+pub fn score_candidate(
+    candidate: &CandidateGrouping,
+    dataset: &Dataset,
+    stat_config: &StatConfig,
+    group_constraints: Option<&[SexConstraint]>,
+    scratch: &mut EvalScratch,
+) -> Result<CandidateScore> {
+    run_indicator_tests(
+        candidate,
+        dataset,
+        stat_config,
+        group_constraints,
+        scratch,
+        None,
+    )
+}
 
 /// Evaluate a candidate grouping by computing statistical tests
 pub fn evaluate_grouping(
@@ -19,107 +65,17 @@ pub fn evaluate_grouping_with_constraints(
     stat_config: &StatConfig,
     group_constraints: Option<&[SexConstraint]>,
 ) -> Result<GroupingResult> {
-    let mut statistics = Vec::new();
-    let mut min_p = f64::MAX;
-    let mut sum_p = 0.0;
-    let mut num_invalid = 0;
+    let mut scratch = EvalScratch::default();
+    let mut statistics = Vec::with_capacity(stat_config.selected_indicators.len());
 
-    // Build a map of group_index -> is_experimental
-    let experimental_groups: HashMap<usize, bool> = if let Some(constraints) = group_constraints {
-        constraints
-            .iter()
-            .map(|c| (c.group_index, c.group_type == GroupType::Experimental))
-            .collect()
-    } else {
-        // If no constraints provided, all groups are experimental
-        HashMap::new()
-    };
-
-    // For each selected indicator, compute P-value
-    for indicator_name in &stat_config.selected_indicators {
-        // Extract indicator values for each group, excluding reserve groups
-        let groups: Vec<Vec<f64>> = candidate
-            .groups
-            .iter()
-            .enumerate()
-            .filter_map(|(group_idx, animal_indices)| {
-                // Skip reserve groups (they don't participate in statistical tests)
-                let is_experimental = experimental_groups.get(&group_idx).copied().unwrap_or(true); // Default to experimental if no constraint
-
-                if !is_experimental {
-                    return None;
-                }
-
-                let values: Vec<f64> = animal_indices
-                    .iter()
-                    .filter_map(|&idx| dataset.animals[idx].indicators.get(indicator_name).copied())
-                    .collect();
-
-                Some(values)
-            })
-            .collect();
-
-        // Skip if any group has insufficient data
-        if groups.iter().any(|g| g.len() < 2) {
-            continue;
-        }
-
-        // Compute P-value using appropriate statistical test
-        let (levene_p_value, diff_p_value, test_method, posthoc_results) =
-            stats::compute_p_value(&groups, stat_config.alpha)?;
-
-        // For multi-group (≥3), check post-hoc results
-        let mut is_valid = diff_p_value > stat_config.alpha;
-        let mut posthoc_comparisons = None;
-
-        if let Some(posthoc) = posthoc_results {
-            // Convert to PostHocComparison and check if all pairwise comparisons pass
-            let comparisons: Vec<PostHocComparison> = posthoc
-                .iter()
-                .map(|(g1, g2, p)| PostHocComparison {
-                    group1_id: *g1,
-                    group2_id: *g2,
-                    p_value: *p,
-                    is_valid: *p > stat_config.alpha,
-                })
-                .collect();
-
-            // Strict criterion: ALL pairwise comparisons must have P > α
-            let all_posthoc_valid = comparisons.iter().all(|c| c.is_valid);
-            is_valid = is_valid && all_posthoc_valid;
-
-            posthoc_comparisons = Some(comparisons);
-        }
-
-        if !is_valid {
-            num_invalid += 1;
-        }
-
-        if diff_p_value < min_p {
-            min_p = diff_p_value;
-        }
-        sum_p += diff_p_value;
-
-        statistics.push(IndicatorStats {
-            indicator_name: indicator_name.clone(),
-            levene_p_value,
-            diff_p_value,
-            test_method,
-            is_valid,
-            posthoc_results: posthoc_comparisons,
-        });
-    }
-
-    let mean_p = if !statistics.is_empty() {
-        sum_p / statistics.len() as f64
-    } else {
-        0.0
-    };
-
-    let meets_criteria = match stat_config.mode {
-        OptimizationMode::Strict => num_invalid == 0,
-        OptimizationMode::Optimized => num_invalid <= 1,
-    };
+    let score = run_indicator_tests(
+        candidate,
+        dataset,
+        stat_config,
+        group_constraints,
+        &mut scratch,
+        Some(&mut statistics),
+    )?;
 
     // Convert candidate to assignments
     let mut assignments = Vec::new();
@@ -134,22 +90,146 @@ pub fn evaluate_grouping_with_constraints(
         }
     }
 
-    let total_indicators = statistics.len();
-    let passed_indicators = total_indicators - num_invalid;
+    let num_experimental_groups = match group_constraints {
+        Some(constraints) => constraints
+            .iter()
+            .filter(|c| c.group_type == GroupType::Experimental)
+            .count(),
+        None => candidate.groups.len(),
+    };
 
     Ok(GroupingResult {
         assignments,
         statistics,
         summary: ResultSummary {
-            min_p_value: min_p,
-            mean_p_value: mean_p,
-            num_invalid_indicators: num_invalid,
-            meets_criteria,
+            min_p_value: score.min_p_value,
+            mean_p_value: score.mean_p_value,
+            num_invalid_indicators: score.num_invalid_indicators,
+            meets_criteria: score.meets_criteria(stat_config.mode),
             total_animals: dataset.animals.len(),
-            num_groups: candidate.groups.len(),
-            passed_indicators,
-            total_indicators,
+            num_groups: num_experimental_groups,
+            passed_indicators: score.total_indicators - score.num_invalid_indicators,
+            total_indicators: score.total_indicators,
         },
         computation_time_ms: 0, // Will be set by caller
+    })
+}
+
+/// Shared test cascade driver for both the scoring pass and the full evaluation.
+///
+/// Keeping a single implementation guarantees that the numbers used for ranking are
+/// exactly the numbers later reported for the winning candidates.
+fn run_indicator_tests(
+    candidate: &CandidateGrouping,
+    dataset: &Dataset,
+    stat_config: &StatConfig,
+    group_constraints: Option<&[SexConstraint]>,
+    scratch: &mut EvalScratch,
+    mut collect: Option<&mut Vec<IndicatorStats>>,
+) -> Result<CandidateScore> {
+    let mut min_p = f64::MAX;
+    let mut sum_p = 0.0;
+    let mut num_invalid = 0;
+    let mut total_indicators = 0;
+
+    // Groups that participate in the statistics (reserve groups are excluded).
+    // Groups without a matching constraint default to experimental.
+    let experimental: Vec<&Vec<usize>> = candidate
+        .groups
+        .iter()
+        .enumerate()
+        .filter(|(group_idx, _)| match group_constraints {
+            Some(constraints) => constraints
+                .iter()
+                .find(|c| c.group_index == *group_idx)
+                .map(|c| c.group_type == GroupType::Experimental)
+                .unwrap_or(true),
+            None => true,
+        })
+        .map(|(_, animal_indices)| animal_indices)
+        .collect();
+
+    // One value buffer per experimental group, reused across indicators and candidates so
+    // the hot loop stays allocation-free after the first candidate on each worker thread.
+    if scratch.groups.len() != experimental.len() {
+        scratch.groups.resize_with(experimental.len(), Vec::new);
+    }
+
+    // For each selected indicator, compute P-value
+    for indicator_name in &stat_config.selected_indicators {
+        // Extract indicator values for each experimental group
+        for (buffer, animal_indices) in scratch.groups.iter_mut().zip(&experimental) {
+            buffer.clear();
+            buffer.extend(
+                animal_indices.iter().filter_map(|&idx| {
+                    dataset.animals[idx].indicators.get(indicator_name).copied()
+                }),
+            );
+        }
+
+        // Skip if any group has insufficient data
+        if scratch.groups.iter().any(|g| g.len() < 2) {
+            continue;
+        }
+
+        let test = stats::compute_indicator_test(
+            &scratch.groups,
+            stat_config.alpha,
+            &mut scratch.posthoc,
+        )?;
+
+        // Strict criterion: main test AND every pairwise post-hoc comparison must have P > alpha
+        let is_valid = test.diff_p_value > stat_config.alpha && test.posthoc_all_valid;
+
+        if !is_valid {
+            num_invalid += 1;
+        }
+
+        if test.diff_p_value < min_p {
+            min_p = test.diff_p_value;
+        }
+        sum_p += test.diff_p_value;
+        total_indicators += 1;
+
+        if let Some(statistics) = collect.as_deref_mut() {
+            let posthoc_results = if scratch.posthoc.is_empty() {
+                None
+            } else {
+                Some(
+                    scratch
+                        .posthoc
+                        .iter()
+                        .map(|&(g1, g2, p)| PostHocComparison {
+                            group1_id: g1,
+                            group2_id: g2,
+                            p_value: p,
+                            is_valid: p > stat_config.alpha,
+                        })
+                        .collect(),
+                )
+            };
+
+            statistics.push(IndicatorStats {
+                indicator_name: indicator_name.clone(),
+                levene_p_value: test.levene_p_value,
+                diff_p_value: test.diff_p_value,
+                test_method: test.method.as_str().to_string(),
+                is_valid,
+                posthoc_results,
+            });
+        }
+    }
+
+    let mean_p = if total_indicators > 0 {
+        sum_p / total_indicators as f64
+    } else {
+        0.0
+    };
+
+    Ok(CandidateScore {
+        min_p_value: min_p,
+        mean_p_value: mean_p,
+        num_invalid_indicators: num_invalid,
+        total_indicators,
     })
 }

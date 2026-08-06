@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { useAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { resultAtom, setErrorAtom, datasetAtom, selectedIndicatorsAtom, resetStateAtom } from "@/stores";
+import { resultAtom, setErrorAtom, datasetAtom, selectedIndicatorsAtom, resetStateAtom, groupConfigAtom } from "@/stores";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -26,6 +26,7 @@ import {
 export function ResultsPage() {
   const [result] = useAtom(resultAtom);
   const [dataset] = useAtom(datasetAtom);
+  const [groupConfig] = useAtom(groupConfigAtom);
   const [selectedIndicators] = useAtom(selectedIndicatorsAtom);
   const [, setError] = useAtom(setErrorAtom);
   const [, resetState] = useAtom(resetStateAtom);
@@ -103,11 +104,25 @@ export function ResultsPage() {
     {}
   );
 
+  // Reserve animals share the assignment list with the experimental groups, so label
+  // them from the configuration instead of numbering them as another group.
+  const reserveGroupIds = new Set(
+    (groupConfig?.sex_constraints ?? [])
+      .filter((c) => c.group_type === "Reserve")
+      .map((c) => c.group_index)
+  );
+
   const groups = Object.entries(groupedAssignments)
-    .map(([groupId, animals]) => ({
-      group_index: Number(groupId),
-      animal_ids: animals.map((a) => a.id),
-    }))
+    .map(([groupId, animals]) => {
+      const group_index = Number(groupId);
+      const isReserve = reserveGroupIds.has(group_index);
+      return {
+        group_index,
+        isReserve,
+        label: isReserve ? "备用动物" : `第 ${group_index + 1} 组`,
+        animal_ids: animals.map((a) => a.id),
+      };
+    })
     .sort((a, b) => a.group_index - b.group_index);
 
   return (
@@ -172,13 +187,15 @@ export function ResultsPage() {
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {groups.map((group) => (
-              <Card key={group.group_index}>
+              <Card
+                key={group.group_index}
+                className={group.isReserve ? "border-dashed border-2 bg-muted/20" : undefined}
+              >
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base">
-                    第 {group.group_index + 1} 组
-                  </CardTitle>
+                  <CardTitle className="text-base">{group.label}</CardTitle>
                   <CardDescription>
                     {group.animal_ids.length} 只动物
+                    {group.isReserve && "（不参与统计）"}
                   </CardDescription>
                 </CardHeader>
                 <CardContent>

@@ -162,18 +162,23 @@ export function ConfigurePage() {
       return;
     }
 
-    // Build complete sex constraints: experimental groups + reserve group
-    const allConstraints: SexConstraint[] = [
-      ...sexConstraints,
-      // Add reserve group as the last constraint
-      {
-        group_index: numGroups,
-        male_count: reserveMaleCount,
-        female_count: reserveFemaleCount,
-        group_type: "Reserve",
-        custom_name: "备用动物",
-      },
-    ];
+    // Build complete sex constraints: experimental groups + reserve group.
+    // The reserve group is only added when it actually holds animals — an empty one
+    // would still be counted as a group everywhere downstream (UI, summary, export)
+    // and would add a pointless level to the candidate enumeration.
+    const hasReserveAnimals = reserveMaleCount + reserveFemaleCount > 0;
+    const allConstraints: SexConstraint[] = hasReserveAnimals
+      ? [
+          ...sexConstraints,
+          {
+            group_index: numGroups,
+            male_count: reserveMaleCount,
+            female_count: reserveFemaleCount,
+            group_type: "Reserve",
+            custom_name: "备用动物",
+          },
+        ]
+      : sexConstraints;
 
     // Determine group size configuration based on whether distribution is even
     let animalGroupSize: { type: "Uniform"; value: number } | { type: "Custom"; values: number[] };
@@ -202,7 +207,7 @@ export function ConfigurePage() {
 
     // Build group config using complete constraints
     const groupConfig: GroupConfig = {
-      num_groups: numGroups + 1, // Include reserve group
+      num_groups: allConstraints.length,
       animals_per_group: animalGroupSize,
       sex_constraints: allConstraints,
     };

@@ -27,6 +27,15 @@ export function ComputePage() {
   const [progress, setProgress] = useState(0);
   const [computationTime, setComputationTime] = useState<number>(0);
 
+  // Reserve animals are not an experimental group, so they must not inflate the
+  // group count shown to the user.
+  const experimentalGroups =
+    groupConfig?.sex_constraints.filter((c) => c.group_type !== "Reserve").length ?? 0;
+  const reserveAnimals =
+    groupConfig?.sex_constraints
+      .filter((c) => c.group_type === "Reserve")
+      .reduce((sum, c) => sum + c.male_count + c.female_count, 0) ?? 0;
+
   useEffect(() => {
     if (!dataset || !groupConfig || !statConfig) {
       setError("Missing required configuration");
@@ -169,7 +178,12 @@ export function ComputePage() {
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <div>
                   <span className="text-muted-foreground">分组数量:</span>
-                  <span className="ml-2 font-medium">{groupConfig.num_groups}</span>
+                  <span className="ml-2 font-medium">{experimentalGroups}</span>
+                  {reserveAnimals > 0 && (
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      (另有备用动物 {reserveAnimals} 只)
+                    </span>
+                  )}
                 </div>
                 <div>
                   <span className="text-muted-foreground">每组动物数:</span>

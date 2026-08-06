@@ -158,7 +158,7 @@ pub struct GroupingResult {
     pub computation_time_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GroupAssignment {
     pub animal_id: String,
     pub sex: Sex,

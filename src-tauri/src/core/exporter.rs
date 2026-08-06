@@ -378,20 +378,34 @@ fn write_summary_sheet(
     sheet.write_string_with_format(row, 0, "分组配置", &label_format)?;
     row += 1;
 
-    // Count groups
-    let num_groups = result
+    // Count groups. Reserve animals are not an experimental group, so they are listed
+    // separately rather than counted here.
+    let total_groups = result
         .assignments
         .iter()
         .map(|a| a.group_id)
         .max()
         .unwrap_or(0)
         + 1;
+
+    let constraint_for = |group_id: usize| -> Option<&SexConstraint> {
+        config
+            .group_constraints
+            .as_ref()?
+            .iter()
+            .find(|c| c.group_index == group_id)
+    };
+    let is_reserve = |group_id: usize| -> bool {
+        constraint_for(group_id).is_some_and(|c| c.group_type == GroupType::Reserve)
+    };
+
+    let num_experimental_groups = (0..total_groups).filter(|&id| !is_reserve(id)).count();
     sheet.write_string(row, 0, "分组数量")?;
-    sheet.write_number(row, 1, num_groups as f64)?;
+    sheet.write_number(row, 1, num_experimental_groups as f64)?;
     row += 1;
 
     // Group composition
-    for group_id in 0..num_groups {
+    for group_id in 0..total_groups {
         let group_animals: Vec<_> = result
             .assignments
             .iter()
@@ -404,7 +418,10 @@ fn write_summary_sheet(
             .filter(|a| a.sex == Sex::Female)
             .count();
 
-        sheet.write_string(row, 0, format!("组 {} 配置", group_id + 1))?;
+        let group_label = constraint_for(group_id)
+            .and_then(|c| c.custom_name.clone())
+            .unwrap_or_else(|| format!("组 {}", group_id + 1));
+        sheet.write_string(row, 0, format!("{group_label} 配置"))?;
         sheet.write_string(
             row,
             1,

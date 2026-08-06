@@ -4,6 +4,14 @@ use anyhow::Result;
 /// Post-hoc test for ANOVA when variances are equal
 /// Returns pairwise comparisons: Vec of (group1_idx, group2_idx, p_value)
 pub fn tukey_hsd(groups: &[Vec<f64>]) -> Result<Vec<(usize, usize, f64)>> {
+    let mut results = Vec::new();
+    tukey_hsd_into(groups, &mut results)?;
+    Ok(results)
+}
+
+/// Same as [`tukey_hsd`] but appends into a caller-owned buffer, so hot loops can
+/// reuse one allocation across indicators and candidates.
+pub fn tukey_hsd_into(groups: &[Vec<f64>], results: &mut Vec<(usize, usize, f64)>) -> Result<()> {
     if groups.len() < 2 {
         return Err(anyhow::anyhow!("Need at least 2 groups for Tukey HSD"));
     }
@@ -35,8 +43,6 @@ pub fn tukey_hsd(groups: &[Vec<f64>]) -> Result<Vec<(usize, usize, f64)>> {
     let mse = ss_within / df_within as f64;
 
     // Pairwise comparisons
-    let mut results = Vec::new();
-
     for i in 0..k {
         for j in (i + 1)..k {
             let (mean_i, n_i) = group_stats[i];
@@ -54,7 +60,7 @@ pub fn tukey_hsd(groups: &[Vec<f64>]) -> Result<Vec<(usize, usize, f64)>> {
         }
     }
 
-    Ok(results)
+    Ok(())
 }
 
 /// Convert Tukey's Q statistic to P-value
