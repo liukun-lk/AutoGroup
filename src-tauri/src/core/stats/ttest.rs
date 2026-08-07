@@ -1,6 +1,18 @@
 use anyhow::Result;
 use statrs::distribution::{ContinuousCDF, StudentsT};
 
+/// P-value for a comparison whose standard error is zero: both groups are constant, so
+/// the t statistic degenerates to 0/0 or +/-inf and `StudentsT::cdf` panics on the former.
+/// With no spread left there is nothing to test — either the two constants coincide or
+/// they differ, with no uncertainty in between.
+fn degenerate_p(mean1: f64, mean2: f64) -> f64 {
+    if mean1 == mean2 {
+        1.0
+    } else {
+        0.0
+    }
+}
+
 /// Student's t-test (assumes equal variances)
 /// Tests if means of two groups are significantly different
 /// Returns P-value (two-tailed)
@@ -25,6 +37,10 @@ pub fn student_ttest(group1: &[f64], group2: &[f64]) -> Result<f64> {
     // Pooled standard deviation
     let pooled_variance = ((n1 - 1.0) * var1 + (n2 - 1.0) * var2) / (n1 + n2 - 2.0);
     let se = (pooled_variance * (1.0 / n1 + 1.0 / n2)).sqrt();
+
+    if se <= 0.0 {
+        return Ok(degenerate_p(mean1, mean2));
+    }
 
     // t-statistic
     let t_stat = (mean1 - mean2) / se;
@@ -63,6 +79,10 @@ pub fn welch_ttest(group1: &[f64], group2: &[f64]) -> Result<f64> {
     // Standard error
     let se = (var1 / n1 + var2 / n2).sqrt();
 
+    if se <= 0.0 {
+        return Ok(degenerate_p(mean1, mean2));
+    }
+
     // t-statistic
     let t_stat = (mean1 - mean2) / se;
 
@@ -80,6 +100,20 @@ pub fn welch_ttest(group1: &[f64], group2: &[f64]) -> Result<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Both groups constant: the standard error vanishes and the t statistic is 0/0 or
+    /// +/-inf. The answer is decided by the means, not by a distribution lookup.
+    #[test]
+    fn zero_standard_error_is_decided_by_the_means() {
+        let a = vec![1.0; 4];
+        let b = vec![1.0; 4];
+        assert_eq!(student_ttest(&a, &b).unwrap(), 1.0);
+        assert_eq!(welch_ttest(&a, &b).unwrap(), 1.0);
+
+        let c = vec![2.0; 4];
+        assert_eq!(student_ttest(&a, &c).unwrap(), 0.0);
+        assert_eq!(welch_ttest(&a, &c).unwrap(), 0.0);
+    }
 
     #[test]
     fn test_student_ttest_same_distribution() {

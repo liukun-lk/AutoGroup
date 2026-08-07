@@ -47,6 +47,15 @@ pub fn one_way_anova(groups: &[Vec<f64>]) -> Result<f64> {
     let df_between = k - 1.0;
     let df_within = n_total as f64 - k;
 
+    // No within-group variation leaves F as 0/0 or x/0, neither of which the F
+    // distribution accepts — `FisherSnedecor::cdf` panics on a NaN argument. The answer
+    // does not need a distribution anyway: with every group internally constant the
+    // question is only whether their means coincide. Levene reaches this on any split
+    // where each group happens to hold a single repeated value.
+    if ssw <= 0.0 {
+        return Ok(if ssb <= 0.0 { 1.0 } else { 0.0 });
+    }
+
     // Mean squares
     let msb = ssb / df_between;
     let msw = ssw / df_within;
@@ -121,6 +130,18 @@ pub fn welch_anova(groups: &[Vec<f64>]) -> Result<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A split where every group happens to be internally constant leaves the F statistic
+    /// as 0/0. It used to reach `FisherSnedecor::cdf(NaN)`, which panics inside statrs and
+    /// took the whole run down with it.
+    #[test]
+    fn zero_within_group_variance_is_decided_by_the_means() {
+        let identical = vec![vec![1.0; 4], vec![1.0; 4], vec![1.0; 4]];
+        assert_eq!(one_way_anova(&identical).unwrap(), 1.0);
+
+        let separated = vec![vec![1.0; 4], vec![2.0; 4], vec![3.0; 4]];
+        assert_eq!(one_way_anova(&separated).unwrap(), 0.0);
+    }
 
     #[test]
     fn test_one_way_anova_equal_means() {

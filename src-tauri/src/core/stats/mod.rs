@@ -37,6 +37,7 @@ impl std::fmt::Display for TestMethod {
 }
 
 /// Outcome of the test cascade for a single indicator.
+#[derive(Debug)]
 pub struct IndicatorTest {
     pub levene_p_value: f64,
     pub diff_p_value: f64,
@@ -156,4 +157,81 @@ pub fn compute_p_value(
         test.method.as_str().to_string(),
         posthoc,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The whole cascade over a column with no variation at all. Levene runs a one-way
+    /// ANOVA on the absolute deviations, which are all zero here, so this used to panic
+    /// before the main test was ever reached.
+    #[test]
+    fn constant_indicator_runs_through_the_cascade() {
+        let groups = vec![vec![1.0; 4], vec![1.0; 4], vec![1.0; 4]];
+        let mut posthoc = Vec::new();
+        let test =
+            compute_indicator_test(&groups, 0.05, PostHocDetail::Exact, &mut posthoc).unwrap();
+
+        assert_eq!(test.levene_p_value, 1.0);
+        assert_eq!(test.diff_p_value, 1.0);
+        assert!(
+            test.posthoc_all_valid,
+            "identical groups cannot be unbalanced"
+        );
+        assert_eq!(
+            posthoc.iter().map(|c| c.2).collect::<Vec<_>>(),
+            vec![1.0; 3]
+        );
+    }
+
+    /// Same shape, but the constants differ between groups: the split is as unbalanced as
+    /// it gets, and the cascade has to say so rather than fall over.
+    #[test]
+    fn separated_constant_groups_are_reported_as_different() {
+        let groups = vec![vec![1.0; 4], vec![2.0; 4], vec![3.0; 4]];
+        let mut posthoc = Vec::new();
+        let test =
+            compute_indicator_test(&groups, 0.05, PostHocDetail::Exact, &mut posthoc).unwrap();
+
+        assert_eq!(test.diff_p_value, 0.0);
+        assert!(!test.posthoc_all_valid);
+    }
+
+    /// The ranking pass takes the ValidityOnly shortcut and the reported Top-N takes the
+    /// exact path; a candidate must not change verdict between them.
+    ///
+    /// The last shape has two constant groups and one that varies, so Levene declares the
+    /// variances unequal and the cascade reaches Welch's ANOVA, where a zero-variance
+    /// group leaves the weights undefined. Both routes then fail identically — the
+    /// reference implementation returns NaN there for the same reason — and the callers
+    /// treat that as "this indicator cannot be tested on this split".
+    #[test]
+    fn validity_shortcut_agrees_with_exact_on_degenerate_data() {
+        for groups in [
+            vec![vec![1.0; 4], vec![1.0; 4], vec![1.0; 4]],
+            vec![vec![1.0; 4], vec![2.0; 4], vec![3.0; 4]],
+            vec![vec![1.0; 4], vec![1.0; 4], vec![3.0, 9.0, 4.0, 1.0]],
+        ] {
+            let mut posthoc = Vec::new();
+            let exact = compute_indicator_test(&groups, 0.05, PostHocDetail::Exact, &mut posthoc);
+            let shortcut =
+                compute_indicator_test(&groups, 0.05, PostHocDetail::ValidityOnly, &mut Vec::new());
+
+            match (exact, shortcut) {
+                (Ok(exact), Ok(shortcut)) => {
+                    assert_eq!(
+                        exact.posthoc_all_valid, shortcut.posthoc_all_valid,
+                        "verdicts diverged on {groups:?}"
+                    );
+                    assert_eq!(exact.diff_p_value, shortcut.diff_p_value);
+                }
+                (Err(_), Err(_)) => {}
+                (exact, shortcut) => panic!(
+                    "one route succeeded and the other did not on {groups:?}: \
+                     exact={exact:?}, shortcut={shortcut:?}"
+                ),
+            }
+        }
+    }
 }
