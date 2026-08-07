@@ -1,6 +1,6 @@
 [package]
 name = "autogroup"
-version = "0.1.4"
+version = "0.1.5"
 description = "Desktop app for automated animal grouping in laboratory experiments with statistically balanced biological indicators"
 license = "MIT"
 authors = ["Kun Liu"]
@@ -41,6 +41,9 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 # Parallel computing
 rayon = "1.10"
 rand = "0.8"
+# Reproducibility contract: StdRng is explicitly documented as *not* reproducible
+# across rand versions, so every seeded path pins ChaCha12 directly.
+rand_chacha = "0.3"
 
 # Error handling
 anyhow = "1.0"
