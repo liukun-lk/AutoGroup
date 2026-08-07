@@ -732,6 +732,33 @@ fn write_summary_sheet(
     };
     row += 1;
 
+    if let Some(r) = record {
+        sheet.write_string(row, 0, "接受准则")?;
+        let acceptance_text = match r.acceptance {
+            None => "无（纯随机）".to_string(),
+            Some(AcceptanceCriterion::AlphaLine) => "全部所选指标 P > α".to_string(),
+            Some(AcceptanceCriterion::TopFraction { target_rate }) => format!(
+                "仅接受最均衡的前 {:.0}%（min(P) ≥ {}，定标抽样 {} 次）",
+                target_rate * 100.0,
+                r.calibrated_threshold
+                    .map_or("未记录".to_string(), |t| format!("{t:.6}")),
+                r.calibration_draws.unwrap_or(0),
+            ),
+        };
+        sheet.write_string(row, 1, &acceptance_text)?;
+        row += 1;
+
+        // Seeds are written as strings everywhere in this sheet: u64 exceeds f64's
+        // integer precision and Excel would silently round it.
+        sheet.write_string(row, 0, "主种子")?;
+        sheet.write_string(row, 1, r.base_seed.to_string())?;
+        row += 1;
+
+        sheet.write_string(row, 0, "抽签序号")?;
+        sheet.write_number(row, 1, r.draw_index as f64)?;
+        row += 1;
+    }
+
     // Written for every mode, randomized or not: it is what pins "the same input" when
     // a run is re-checked years later.
     sheet.write_string(row, 0, "输入指纹")?;

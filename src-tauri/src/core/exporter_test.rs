@@ -391,4 +391,88 @@ mod export_integration_tests {
         println!("\n✓ Exported file with selected indicators only");
         println!("  File: {output_path}");
     }
+
+    #[test]
+    fn summary_sheet_records_the_acceptance_and_draw_provenance() {
+        let dataset =
+            parser::parse_excel_file(&fixture_path("tests/fixtures/randomization_input_60f.xlsx"))
+                .expect("fixture must parse");
+
+        let constraints: Vec<SexConstraint> = (0..3)
+            .map(|i| SexConstraint {
+                group_index: i,
+                male_count: 0,
+                female_count: 20,
+                group_type: GroupType::Experimental,
+                custom_name: None,
+            })
+            .collect();
+
+        let indicators = vec!["体重".to_string(), "CD45 比例".to_string()];
+
+        let group_config = GroupConfig {
+            num_groups: 3,
+            animals_per_group: GroupSize::Uniform { value: 20 },
+            sex_constraints: constraints.clone(),
+            scenario: StudyScenario::Exploratory,
+            method: GroupingMethod::ConstrainedRandom,
+            randomization: Some(RandomizationConfig {
+                seed: Some(42),
+                primary_indicator: None,
+                acceptance: Some(AcceptanceCriterion::TopFraction { target_rate: 0.10 }),
+                max_attempts: 10_000,
+                draw_index: 2,
+            }),
+        };
+
+        let stat_config = StatConfig {
+            selected_indicators: indicators.clone(),
+            alpha: 0.05,
+            mode: OptimizationMode::Strict,
+            max_candidates: 1,
+        };
+
+        let result = grouping::compute_grouping(dataset.clone(), group_config, stat_config)
+            .expect("randomized run must succeed")
+            .candidates
+            .remove(0);
+        let record = result
+            .randomization
+            .clone()
+            .expect("record must be present");
+
+        let output_dir = std::env::temp_dir().join("autogroup_export_acceptance");
+        std::fs::create_dir_all(&output_dir).expect("temp dir");
+        let output = output_dir
+            .join("acceptance.xlsx")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let sheet_config = exporter::SheetConfig {
+            scenario: StudyScenario::Exploratory,
+            selected_indicators: indicators,
+            include_statistics: true,
+            include_summary: true,
+            group_constraints: Some(constraints),
+        };
+        exporter::export_grouping_result(&result, &dataset, &sheet_config, &output)
+            .expect("export must succeed");
+
+        let rows = read_sheet(&output, "汇总信息");
+        let value_of = |label: &str| -> String {
+            rows.iter()
+                .find(|row| row.first().map(String::as_str) == Some(label))
+                .unwrap_or_else(|| panic!("summary sheet must contain a {label} row"))
+                .get(1)
+                .cloned()
+                .unwrap_or_default()
+        };
+
+        assert!(value_of("接受准则").contains("仅接受最均衡的前 10%"));
+        assert!(value_of("接受准则").contains("定标抽样 1000 次"));
+        assert_eq!(value_of("主种子"), "42");
+        assert_eq!(value_of("抽签序号"), "2");
+        assert_eq!(value_of("随机种子"), record.seed.to_string());
+    }
 }
