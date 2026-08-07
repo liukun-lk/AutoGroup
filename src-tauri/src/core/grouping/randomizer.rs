@@ -22,6 +22,11 @@ use std::cmp::Ordering;
 /// reproducible across library versions, so the algorithm is pinned here instead.
 pub const RNG_ALGORITHM: &str = "chacha12";
 
+/// Tag mixed into the calibration RNG seed so calibration and the formal draws consume
+/// distinct, individually reproducible streams.
+const CALIBRATION_TAG: u64 = 0x4143_4345_5054_0000; // "ACCEPT\0\0"
+const CALIBRATION_DRAWS: usize = 1000;
+
 pub fn engine_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
@@ -51,9 +56,26 @@ pub fn compute_random_grouping(
 
     let plan = build_plan(&dataset, &group_config, &rand_config, &order)?;
 
+    let threshold = match rand_config.acceptance {
+        Some(AcceptanceCriterion::TopFraction { target_rate }) => Some(calibrate_threshold(
+            &plan,
+            &dataset,
+            &stat_config,
+            &group_config.sex_constraints,
+            seed,
+            target_rate,
+        )?),
+        _ => None,
+    };
+
     let max_attempts = match rand_config.acceptance {
         None => 1,
-        Some(_) => rand_config.max_attempts.max(1),
+        Some(AcceptanceCriterion::AlphaLine) => rand_config.max_attempts.max(1),
+        // Expected draws ~ 1/target_rate; 50x headroom keeps unlucky streaks from
+        // failing a run that would succeed a moment later.
+        Some(AcceptanceCriterion::TopFraction { target_rate }) => rand_config
+            .max_attempts
+            .max((50.0 / target_rate).ceil() as usize),
     };
 
     let mut scratch = evaluator::EvalScratch::default();
@@ -81,8 +103,9 @@ pub fn compute_random_grouping(
 
         let ok = match criterion {
             AcceptanceCriterion::AlphaLine => score.meets_criteria(stat_config.mode),
-            // Rejected by validate_randomization until the calibration lands (Task 4).
-            AcceptanceCriterion::TopFraction { .. } => unreachable!("rejected in validation"),
+            AcceptanceCriterion::TopFraction { .. } => {
+                score.min_p_value >= threshold.expect("calibrated before the loop")
+            }
         };
         if ok {
             accepted = Some((draw, attempt));
@@ -98,6 +121,14 @@ pub fn compute_random_grouping(
     let (draw, attempts) = match accepted {
         Some(pair) => pair,
         None => {
+            let criterion_desc = match (rand_config.acceptance, threshold) {
+                (Some(AcceptanceCriterion::TopFraction { target_rate }), Some(p0)) => format!(
+                    "仅接受最均衡的前 {:.0}%，即 min(P) ≥ {:.4}",
+                    target_rate * 100.0,
+                    p0
+                ),
+                _ => format!("全部指标 P > {}", stat_config.alpha),
+            };
             return Err(acceptance_failure(
                 &dataset,
                 &group_config,
@@ -105,7 +136,8 @@ pub fn compute_random_grouping(
                 last_rejected.as_ref(),
                 &observed_min_p,
                 max_attempts,
-            ))
+                &criterion_desc,
+            ));
         }
     };
 
@@ -147,6 +179,8 @@ pub fn compute_random_grouping(
         primary_indicator: rand_config.primary_indicator.clone(),
         block_size: plan.block_size,
         incomplete_last_block: plan.incomplete_last_block,
+        calibrated_threshold: threshold,
+        calibration_draws: threshold.map(|_| CALIBRATION_DRAWS),
     });
 
     let meets_criteria = result.summary.meets_criteria;
@@ -241,11 +275,10 @@ pub fn validate_randomization(
         bail!("启用接受准则时，最大抽样次数必须至少为 1。");
     }
 
-    if matches!(
-        rand_config.acceptance,
-        Some(AcceptanceCriterion::TopFraction { .. })
-    ) {
-        bail!("增强档接受准则尚未启用。");
+    if let Some(AcceptanceCriterion::TopFraction { target_rate }) = rand_config.acceptance {
+        if !(target_rate > 0.0 && target_rate <= 1.0) {
+            bail!("目标接受率必须在 (0, 1] 区间内。");
+        }
     }
 
     Ok(())
@@ -448,6 +481,46 @@ fn build_plan(
     })
 }
 
+/// Fix the min(P) cutoff for `TopFraction` on this dataset. A fixed threshold cannot
+/// work: min(P)'s scale collapses as the indicator count grows (median ~0.30 at 2
+/// indicators, ~0.01 at 70), so the rule the user declares is a target acceptance rate
+/// and the cutoff is its empirical quantile under seeded simulation.
+fn calibrate_threshold(
+    plan: &Plan,
+    dataset: &Dataset,
+    stat_config: &StatConfig,
+    sex_constraints: &[SexConstraint],
+    seed: u64,
+    target_rate: f64,
+) -> Result<f64> {
+    let mut rng = ChaCha12Rng::seed_from_u64(splitmix64(seed ^ CALIBRATION_TAG));
+    let mut scratch = evaluator::EvalScratch::default();
+    let mut min_ps: Vec<f64> = Vec::with_capacity(CALIBRATION_DRAWS);
+
+    for _ in 0..CALIBRATION_DRAWS {
+        let draw = plan.draw(&mut rng);
+        let score = evaluator::score_candidate(
+            &draw.candidate,
+            dataset,
+            stat_config,
+            Some(sex_constraints),
+            &mut scratch,
+            evaluator::Untestable::Skip,
+        )?;
+        if score.min_p_value.is_finite() {
+            min_ps.push(score.min_p_value);
+        }
+    }
+
+    if min_ps.is_empty() {
+        bail!("定标失败：模拟抽样没有任何可检验的指标，无法确定接受门槛。请检查所选指标。");
+    }
+
+    min_ps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+    let idx = ((min_ps.len() - 1) as f64 * (1.0 - target_rate)).round() as usize;
+    Ok(min_ps[idx])
+}
+
 /// Deal one stratum: inside each block, order the animals by their draw and hand out each
 /// group's per-block quota in turn.
 ///
@@ -546,6 +619,7 @@ fn acceptance_failure(
     last_rejected: Option<&CandidateGrouping>,
     observed_min_p: &[f64],
     max_attempts: usize,
+    criterion_desc: &str,
 ) -> anyhow::Error {
     let mut sorted: Vec<f64> = observed_min_p
         .iter()
@@ -589,14 +663,13 @@ fn acceptance_failure(
         .unwrap_or_else(|| "—".to_string());
 
     anyhow!(
-        "抽样 {} 次仍未满足接受准则（α = {}）。\n\
+        "抽样 {} 次仍未满足接受准则（{criterion_desc}）。\n\
          观察到的 min(P) 分布：中位数 {}，最大值 {}。\n\
          最后一次抽样中不达标的指标：{}。\n\
          可选处理：① 把判定口径放宽为「优化」（允许 1 个指标不达标）后重试；\
          ② 关闭接受准则，改为纯随机化并接受失衡告警——此时导出的分组原理会相应改变。\n\
          请勿反复更换种子重算，那属于事后挑选结果。",
         max_attempts,
-        stat_config.alpha,
         quantile(0.5),
         quantile(1.0),
         bottleneck

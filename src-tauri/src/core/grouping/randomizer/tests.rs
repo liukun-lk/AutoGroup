@@ -67,6 +67,16 @@ fn plain(seed: u64) -> RandomizationConfig {
     }
 }
 
+fn constrained_top(seed: u64, target_rate: f64) -> RandomizationConfig {
+    RandomizationConfig {
+        seed: Some(seed),
+        primary_indicator: None,
+        acceptance: Some(AcceptanceCriterion::TopFraction { target_rate }),
+        max_attempts: 10_000,
+        draw_index: 1,
+    }
+}
+
 fn stat_config(indicators: &[&str]) -> StatConfig {
     StatConfig {
         selected_indicators: indicators.iter().map(|s| s.to_string()).collect(),
@@ -640,29 +650,76 @@ fn method_and_parameters_must_agree() {
     assert!(compute_random_grouping(dataset, no_criterion, stat_config(&[BW])).is_err());
 }
 
-/// `TopFraction` is declared in the enum but not implemented yet: `validate_randomization`
-/// must refuse it before any draw happens, rather than falling through to the
-/// `unreachable!()` in the compute loop. This test is temporary — a later task implements
-/// the calibration and replaces it with one asserting the criterion actually works.
 #[test]
-fn top_fraction_is_rejected_until_it_is_implemented() {
-    let config = group_config(
-        female_constraints(3, 20),
-        GroupingMethod::ConstrainedRandom,
-        RandomizationConfig {
-            seed: Some(1),
-            primary_indicator: None,
-            acceptance: Some(AcceptanceCriterion::TopFraction { target_rate: 0.10 }),
-            max_attempts: 10,
-            draw_index: 1,
-        },
+fn top_fraction_accepts_only_above_the_calibrated_threshold() {
+    let result = run(
+        dataset_60f(),
+        group_config(
+            female_constraints(3, 20),
+            GroupingMethod::ConstrainedRandom,
+            constrained_top(42, 0.10),
+        ),
+        stat_config(&[BW, CD45]),
     );
 
-    let err = compute_random_grouping(dataset_60f(), config, stat_config(&[BW]))
+    let record = result.randomization.clone().unwrap();
+    let threshold = record
+        .calibrated_threshold
+        .expect("top-fraction runs must record their threshold");
+    assert_eq!(record.calibration_draws, Some(1000));
+
+    let min_p = result
+        .statistics
+        .iter()
+        .map(|s| s.diff_p_value)
+        .fold(f64::INFINITY, f64::min);
+    assert!(
+        min_p >= threshold,
+        "accepted draw min_p {min_p} must clear the threshold {threshold}"
+    );
+    // On two indicators the top-10% cut sits far above the alpha line (design doc §4.3:
+    // random min(P) has q90 ~ 0.69); a threshold near alpha would mean the calibration
+    // quantile is wired backwards.
+    assert!(threshold > 0.3, "threshold {threshold} is implausibly low");
+}
+
+#[test]
+fn top_fraction_calibration_and_allocation_are_reproducible() {
+    let make = || {
+        group_config(
+            female_constraints(3, 20),
+            GroupingMethod::ConstrainedRandom,
+            constrained_top(42, 0.10),
+        )
+    };
+    let a = run(dataset_60f(), make(), stat_config(&[BW, CD45]));
+    let b = run(dataset_60f(), make(), stat_config(&[BW, CD45]));
+
+    let (ra, rb) = (
+        a.randomization.clone().unwrap(),
+        b.randomization.clone().unwrap(),
+    );
+    assert_eq!(ra.calibrated_threshold, rb.calibrated_threshold);
+    assert_eq!(ra.attempts, rb.attempts);
+    assert_eq!(allocation(&a), allocation(&b));
+}
+
+#[test]
+fn top_fraction_rejects_an_out_of_range_rate() {
+    for rate in [0.0, -0.2, 1.5] {
+        let err = compute_random_grouping(
+            dataset_60f(),
+            group_config(
+                female_constraints(3, 20),
+                GroupingMethod::ConstrainedRandom,
+                constrained_top(42, rate),
+            ),
+            stat_config(&[BW, CD45]),
+        )
         .unwrap_err()
         .to_string();
-
-    assert!(err.contains("尚未启用"), "{err}");
+        assert!(err.contains("目标接受率"), "rate {rate}: {err}");
+    }
 }
 
 #[test]

@@ -333,6 +333,10 @@ pub struct RandomizationRecord {
     pub primary_indicator: Option<String>,
     pub block_size: Option<usize>,
     pub incomplete_last_block: bool,
+    /// Present only for `TopFraction`: the calibrated min(P) cutoff a draw had to clear.
+    pub calibrated_threshold: Option<f64>,
+    /// How many seeded simulation draws produced the cutoff.
+    pub calibration_draws: Option<usize>,
 }
 
 /// `Eq` is deliberately not derived: `random_number` is a float. Assignments are compared
