@@ -78,9 +78,16 @@ export function ConfigurePage() {
   const [primaryIndicator, setPrimaryIndicator] = useState<string>(
     () => storedGroupConfig?.randomization?.primary_indicator ?? ""
   );
-  const [seedText, setSeedText] = useState<string>(
-    () => storedGroupConfig?.randomization?.seed?.toString() ?? ""
-  );
+  const [seedText, setSeedText] = useState<string>(() => {
+    const storedSeed = storedGroupConfig?.randomization?.seed;
+    if (storedSeed != null) return storedSeed.toString();
+    // A blank seed field let the backend generate one; it only ever landed in the run's
+    // record, never back in groupConfigAtom. Hydrate base_seed (not the per-draw seed) so
+    // an unchanged recompute replays the same sequence instead of drawing a fresh one —
+    // `existingRun` (declared above, at the top of the component) must stay in scope here.
+    const recorded = existingRun?.candidates[existingRun.selectedIndex]?.randomization?.base_seed;
+    return recorded != null ? recorded.toString() : "";
+  });
   const [acceptanceTier, setAcceptanceTier] = useState<"alpha" | "topfraction">(() =>
     storedGroupConfig?.randomization?.acceptance?.type === "TopFraction"
       ? "topfraction"
