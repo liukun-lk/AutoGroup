@@ -120,7 +120,9 @@ export function ResultsPage() {
 
   const handleSelectCandidate = (index: number) => {
     if (!run || isGlp) return;
-    setRun({ ...run, selectedIndex: index });
+    // Functional updater: a redraw in flight resolves against whatever `run` is current
+    // at that time, not a stale click-time snapshot from this closure.
+    setRun((prev) => (prev ? { ...prev, selectedIndex: index } : prev));
   };
 
   const handleRedraw = async () => {
@@ -147,11 +149,17 @@ export function ResultsPage() {
       });
       const drawn = multi.candidates[0];
       if (drawn) {
-        setRun({
-          ...run,
-          candidates: [...run.candidates, drawn],
-          selectedIndex: run.candidates.length,
-        });
+        // Functional updater: a candidate selection made while this await was in flight
+        // must not be silently reverted by an update built from the click-time `run`.
+        setRun((prev) =>
+          prev
+            ? {
+                ...prev,
+                candidates: [...prev.candidates, drawn],
+                selectedIndex: prev.candidates.length,
+              }
+            : prev
+        );
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
@@ -296,8 +304,7 @@ export function ResultsPage() {
             {isGlp && (
               <Alert>
                 <AlertDescription className="text-sm">
-                  GLP 场景执行分配隐藏：一次抽签即为最终分配，不提供看到结果后重抽或挑选的入口。
-                  需要更高的均衡度，请在计算前调整接受准则的目标接受率。
+                  {"GLP 场景执行分配隐藏：一次抽签即为最终分配，不提供看到结果后重抽或挑选的入口。需要更高的均衡度，请在计算前调整接受准则的目标接受率。"}
                 </AlertDescription>
               </Alert>
             )}
