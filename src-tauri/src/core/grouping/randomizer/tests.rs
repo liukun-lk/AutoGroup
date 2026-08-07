@@ -1065,6 +1065,51 @@ fn alpha_line_acceptance_is_strict_even_under_optimized_mode() {
     );
 }
 
+// ------------------------------------------------------- top-fraction redraw replay
+
+/// The calibration is keyed on the effective seed, so a `TopFraction` redraw must replay
+/// from its recorded `seed` alone at `draw_index: 1` — calibration, threshold and
+/// rejection sequence all identical. This is also the natural regression carrier for the
+/// `>> 11` truncation `derive_draw_seed` applies for k >= 2.
+#[test]
+fn top_fraction_redraw_replays_from_its_recorded_seed() {
+    let mut original_config = constrained_top(42, 0.10);
+    original_config.draw_index = 2;
+    let original = run(
+        dataset_60f(),
+        group_config(
+            female_constraints(3, 20),
+            GroupingMethod::ConstrainedRandom,
+            original_config,
+        ),
+        stat_config(&[BW, CD45]),
+    );
+    let record = original.randomization.clone().unwrap();
+    assert_ne!(
+        record.seed, 42,
+        "the effective seed must be the derived one"
+    );
+
+    let mut replay_config = constrained_top(record.seed, 0.10);
+    replay_config.draw_index = 1;
+    let replayed = run(
+        dataset_60f(),
+        group_config(
+            female_constraints(3, 20),
+            GroupingMethod::ConstrainedRandom,
+            replay_config,
+        ),
+        stat_config(&[BW, CD45]),
+    );
+    let replayed_record = replayed.randomization.clone().unwrap();
+
+    assert_eq!(allocation(&original), allocation(&replayed));
+    assert_eq!(
+        record.calibrated_threshold,
+        replayed_record.calibrated_threshold
+    );
+}
+
 #[test]
 fn glp_scenario_rejects_redraws() {
     let mut rand_config = plain(42);
