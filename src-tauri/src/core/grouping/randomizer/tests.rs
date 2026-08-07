@@ -1030,6 +1030,41 @@ fn seed_above_the_f64_safe_domain_is_rejected() {
     assert!(err.contains("随机种子"), "{err}");
 }
 
+// ---------------------------------------------------------------- alpha-line vs. mode
+
+/// `AlphaLine`'s copy, the exported 接受准则 row and the reproduction card all declare an
+/// unconditional rule ("every selected indicator P > alpha"), with no carve-out for
+/// `OptimizationMode::Optimized`. The accepted draw must satisfy that rule regardless of
+/// which mode the stat config carries.
+#[test]
+fn alpha_line_acceptance_is_strict_even_under_optimized_mode() {
+    let config = group_config(
+        female_constraints(3, 20),
+        GroupingMethod::ConstrainedRandom,
+        RandomizationConfig {
+            seed: Some(1),
+            primary_indicator: None,
+            acceptance: Some(AcceptanceCriterion::AlphaLine),
+            max_attempts: 1000,
+            draw_index: 1,
+        },
+    );
+    let stat = StatConfig {
+        selected_indicators: vec![BW.to_string(), CD45.to_string()],
+        alpha: 0.05,
+        mode: OptimizationMode::Optimized,
+        max_candidates: 1,
+    };
+
+    let result = run(dataset_60f(), config, stat);
+
+    let num_invalid = result.statistics.iter().filter(|s| !s.is_valid).count();
+    assert_eq!(
+        num_invalid, 0,
+        "AlphaLine must only accept a draw where every indicator clears alpha, even under Optimized mode"
+    );
+}
+
 #[test]
 fn glp_scenario_rejects_redraws() {
     let mut rand_config = plain(42);

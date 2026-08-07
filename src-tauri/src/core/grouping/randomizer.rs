@@ -112,7 +112,11 @@ pub fn compute_random_grouping(
         observed_min_p.push(score.min_p_value);
 
         let ok = match criterion {
-            AcceptanceCriterion::AlphaLine => score.meets_criteria(stat_config.mode),
+            // Unconditional by construction, independent of `stat_config.mode`: the tier
+            // copy, the exported 接受准则 row and the reproduction card all declare "every
+            // selected indicator P > alpha" with no carve-out, so the check has to enforce
+            // exactly that rather than the looser Optimized rule (<=1 failing indicator).
+            AcceptanceCriterion::AlphaLine => score.meets_criteria(OptimizationMode::Strict),
             AcceptanceCriterion::TopFraction { .. } => {
                 score.min_p_value >= threshold.expect("calibrated before the loop")
             }
@@ -689,7 +693,7 @@ fn acceptance_failure(
         "抽样 {} 次仍未满足接受准则（{criterion_desc}）。\n\
          观察到的 min(P) 分布：中位数 {}，最大值 {}。\n\
          最后一次抽样中不达标的指标：{}。\n\
-         可选处理：① 把判定口径放宽为「优化」（允许 1 个指标不达标）后重试；\
+         可选处理：① 检查不达标指标是否存在天然强差异，考虑将其从参与统计的指标中剔除后重试；\
          ② 关闭接受准则，改为纯随机化并接受失衡告警——此时导出的分组原理会相应改变。\n\
          请勿反复更换种子重算，那属于事后挑选结果。",
         max_attempts,
