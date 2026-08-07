@@ -955,6 +955,81 @@ fn draw_index_zero_is_rejected() {
     assert!(err.contains("抽签序号"), "{err}");
 }
 
+// ---------------------------------------------------------------- f64-safe seed domain
+
+/// The JS side of the IPC boundary reads `seed`/`base_seed` as an f64; anything above
+/// `MAX_SEED` (2^53 - 1) does not round-trip exactly. `derive_draw_seed` must never hand
+/// back a value outside that domain for k >= 2, and draw 1 must still pass its base seed
+/// through untouched (validated separately at the domain boundary).
+#[test]
+fn derive_draw_seed_stays_inside_the_f64_safe_domain() {
+    let bases = [0u64, 1, 42, u64::MAX / 2, u64::MAX - 1, u64::MAX];
+
+    for &base in &bases {
+        assert_eq!(
+            derive_draw_seed(base, 1),
+            base,
+            "draw 1 must pass the base seed through verbatim"
+        );
+
+        for k in 2..=100usize {
+            let derived = derive_draw_seed(base, k);
+            assert!(
+                derived <= MAX_SEED,
+                "base {base} draw {k} produced {derived}, above MAX_SEED {MAX_SEED}"
+            );
+        }
+    }
+}
+
+/// Reproduces the exact corruption path from finding 1: serialize a `RandomizationRecord`
+/// the way Tauri IPC does (`serde_json`), parse it back, and read `seed`/`base_seed` the
+/// way JS would — as f64. A seed above `MAX_SEED` would silently change value on this
+/// round trip; this test pins that it does not.
+#[test]
+fn randomization_record_survives_the_ipc_f64_round_trip() {
+    let record = RandomizationRecord {
+        seed: MAX_SEED,
+        base_seed: MAX_SEED - 12345,
+        draw_index: 3,
+        rng_algorithm: RNG_ALGORITHM.to_string(),
+        input_fingerprint: "deadbeef".to_string(),
+        engine_version: engine_version(),
+        attempts: 7,
+        acceptance: Some(AcceptanceCriterion::AlphaLine),
+        primary_indicator: None,
+        block_size: None,
+        incomplete_last_block: false,
+        calibrated_threshold: None,
+        calibration_draws: None,
+    };
+
+    let json = serde_json::to_string(&record).expect("record must serialize");
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("JSON must parse");
+
+    let seed_f64 = parsed["seed"].as_f64().expect("seed must be a JSON number");
+    let base_seed_f64 = parsed["base_seed"]
+        .as_f64()
+        .expect("base_seed must be a JSON number");
+
+    assert_eq!(seed_f64 as u64, record.seed);
+    assert_eq!(base_seed_f64 as u64, record.base_seed);
+}
+
+#[test]
+fn seed_above_the_f64_safe_domain_is_rejected() {
+    let dataset = dataset_60f();
+    let config = group_config(
+        female_constraints(3, 20),
+        GroupingMethod::Random,
+        plain(MAX_SEED + 1),
+    );
+    let err = validate_randomization(&dataset, &config, config.randomization.as_ref().unwrap())
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("随机种子"), "{err}");
+}
+
 #[test]
 fn glp_scenario_rejects_redraws() {
     let mut rand_config = plain(42);

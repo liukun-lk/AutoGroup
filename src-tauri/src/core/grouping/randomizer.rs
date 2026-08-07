@@ -22,6 +22,16 @@ use std::cmp::Ordering;
 /// reproducible across library versions, so the algorithm is pinned here instead.
 pub const RNG_ALGORITHM: &str = "chacha12";
 
+/// Largest seed a browser can carry through the Tauri IPC boundary without rounding.
+///
+/// `RandomizationRecord.seed`/`base_seed` are `u64` in Rust but travel to the frontend as
+/// JSON, where they land in a JS `number` — an IEEE-754 f64 with a 53-bit mantissa. Above
+/// `2^53 - 1`, integers stop having a unique float representation, so the seed the UI
+/// echoes back (e.g. on redraw) can silently differ from the one the engine used. Every
+/// seed this module hands out or accepts is kept inside `0..=MAX_SEED` so the round trip
+/// through JS is exact.
+pub const MAX_SEED: u64 = (1 << 53) - 1;
+
 /// Tag mixed into the calibration RNG seed so calibration and the formal draws consume
 /// distinct, individually reproducible streams.
 const CALIBRATION_TAG: u64 = 0x4143_4345_5054_0000; // "ACCEPT\0\0"
@@ -50,7 +60,7 @@ pub fn compute_random_grouping(
     // record so the run stays reproducible either way.
     let base_seed = rand_config
         .seed
-        .unwrap_or_else(|| rand::thread_rng().gen::<u64>());
+        .unwrap_or_else(|| rand::thread_rng().gen_range(0..=MAX_SEED));
     let seed = derive_draw_seed(base_seed, rand_config.draw_index);
     let mut rng = ChaCha12Rng::seed_from_u64(seed);
 
@@ -260,6 +270,12 @@ pub fn validate_randomization(
 
     if rand_config.draw_index == 0 {
         bail!("抽签序号从 1 开始。");
+    }
+
+    if let Some(s) = rand_config.seed {
+        if s > MAX_SEED {
+            bail!("随机种子超出可精确表示的范围（最大 {MAX_SEED}）。");
+        }
     }
 
     // The UI greys the redraw controls out under GLP, but a greyed-out button does not
@@ -603,11 +619,18 @@ fn splitmix64(mut z: u64) -> u64 {
 
 /// Draw 1 is the base seed itself: a GLP protocol pins its allocation with the seed it
 /// declared. Later draws mix the index in, so every draw stays pinned by (base, k).
+///
+/// The splitmix64 output for k >= 2 is shifted right by 11 bits, discarding the low 11
+/// bits and keeping the high 53 — the widest range that still survives the f64 round trip
+/// through the Tauri IPC boundary (see [`MAX_SEED`]). `base_seed` itself is not shifted:
+/// draw 1 has to pass a user-declared seed through unchanged, and every caller is already
+/// required to keep that seed inside `MAX_SEED` (see `validate_randomization`).
 pub fn derive_draw_seed(base_seed: u64, draw_index: usize) -> u64 {
     if draw_index <= 1 {
         base_seed
     } else {
         splitmix64(base_seed.wrapping_add((draw_index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)))
+            >> 11
     }
 }
 
