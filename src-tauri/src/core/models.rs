@@ -195,12 +195,21 @@ pub struct RandomizationConfig {
     /// Upper bound on rejection-sampling draws.
     #[serde(default = "default_max_attempts")]
     pub max_attempts: usize,
+    /// 1-based draw number within a run. Draw 1 uses the base seed verbatim, so a
+    /// protocol-declared seed replays the allocation with no derivation knowledge;
+    /// later draws (exploratory only) derive their seed from (base_seed, draw_index).
+    #[serde(default = "default_draw_index")]
+    pub draw_index: usize,
 }
 
 /// Sized for the worst case in the design doc: a 70-indicator dataset under Strict has
 /// an acceptance rate around 1.3%, i.e. ~80 draws expected.
 fn default_max_attempts() -> usize {
     10_000
+}
+
+fn default_draw_index() -> usize {
+    1
 }
 
 impl Default for RandomizationConfig {
@@ -210,6 +219,7 @@ impl Default for RandomizationConfig {
             primary_indicator: None,
             acceptance: None,
             max_attempts: default_max_attempts(),
+            draw_index: default_draw_index(),
         }
     }
 }
@@ -308,6 +318,10 @@ pub struct GroupingResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RandomizationRecord {
     pub seed: u64,
+    /// The seed the user supplied (or the backend generated). Equal to `seed` at draw 1.
+    pub base_seed: u64,
+    /// Which draw of the run this is.
+    pub draw_index: usize,
     /// e.g. "chacha12". A seed alone does not pin a sequence.
     pub rng_algorithm: String,
     pub input_fingerprint: String,

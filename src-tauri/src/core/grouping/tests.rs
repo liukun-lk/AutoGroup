@@ -666,6 +666,7 @@ mod dispatch_tests {
                 acceptance: (method != GroupingMethod::Random)
                     .then_some(AcceptanceCriterion::AlphaLine),
                 max_attempts: 1000,
+                draw_index: 1,
             });
 
             let result = grouping::compute_grouping(dataset.clone(), config, stat_config())

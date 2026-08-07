@@ -43,9 +43,10 @@ pub fn compute_random_grouping(
 
     // A caller-supplied seed is the audit trail; a generated one is echoed back in the
     // record so the run stays reproducible either way.
-    let seed = rand_config
+    let base_seed = rand_config
         .seed
         .unwrap_or_else(|| rand::thread_rng().gen::<u64>());
+    let seed = derive_draw_seed(base_seed, rand_config.draw_index);
     let mut rng = ChaCha12Rng::seed_from_u64(seed);
 
     let plan = build_plan(&dataset, &group_config, &rand_config, &order)?;
@@ -136,6 +137,8 @@ pub fn compute_random_grouping(
     result.method = group_config.method;
     result.randomization = Some(RandomizationRecord {
         seed,
+        base_seed,
+        draw_index: rand_config.draw_index,
         rng_algorithm: RNG_ALGORITHM.to_string(),
         input_fingerprint,
         engine_version: engine_version(),
@@ -219,6 +222,10 @@ pub fn validate_randomization(
         GroupingMethod::Minimization => {
             bail!("最小化法（序贯协变量自适应随机化）暂未实现。");
         }
+    }
+
+    if rand_config.draw_index == 0 {
+        bail!("抽签序号从 1 开始。");
     }
 
     if rand_config.acceptance.is_some() && rand_config.max_attempts == 0 {
@@ -502,6 +509,23 @@ fn gcd(a: usize, b: usize) -> usize {
         a
     } else {
         gcd(b, a % b)
+    }
+}
+
+/// SplitMix64 finalizer, used to derive per-draw seeds from the base seed.
+fn splitmix64(mut z: u64) -> u64 {
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Draw 1 is the base seed itself: a GLP protocol pins its allocation with the seed it
+/// declared. Later draws mix the index in, so every draw stays pinned by (base, k).
+pub fn derive_draw_seed(base_seed: u64, draw_index: usize) -> u64 {
+    if draw_index <= 1 {
+        base_seed
+    } else {
+        splitmix64(base_seed.wrapping_add((draw_index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)))
     }
 }
 

@@ -372,6 +372,7 @@ fn each_method_exports_its_own_scenario_and_principle() {
                     || method == GroupingMethod::BlockedRandom)
                     .then_some(AcceptanceCriterion::AlphaLine),
                 max_attempts: 10_000,
+                draw_index: 1,
             }),
         };
 
@@ -491,6 +492,7 @@ fn the_exported_sheet_can_be_re_sorted_into_the_same_grouping() {
             primary_indicator: Some("kg".to_string()),
             acceptance: None,
             max_attempts: 1,
+            draw_index: 1,
         }),
     };
 

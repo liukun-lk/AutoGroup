@@ -53,6 +53,7 @@ fn blocked(seed: u64, enforce: bool) -> RandomizationConfig {
         primary_indicator: Some(BW.to_string()),
         acceptance: enforce.then_some(AcceptanceCriterion::AlphaLine),
         max_attempts: 1000,
+        draw_index: 1,
     }
 }
 
@@ -62,6 +63,7 @@ fn plain(seed: u64) -> RandomizationConfig {
         primary_indicator: None,
         acceptance: None,
         max_attempts: 1,
+        draw_index: 1,
     }
 }
 
@@ -432,6 +434,7 @@ fn tied_primary_values_still_reproduce() {
             primary_indicator: Some("x".to_string()),
             acceptance: None,
             max_attempts: 1,
+            draw_index: 1,
         },
     );
 
@@ -552,6 +555,7 @@ fn exhausting_the_attempt_budget_reports_the_bottleneck_instead_of_degrading() {
             primary_indicator: None,
             acceptance: Some(AcceptanceCriterion::AlphaLine),
             max_attempts: 5,
+            draw_index: 1,
         },
     );
     let stat = StatConfig {
@@ -587,6 +591,7 @@ fn blocked_random_requires_an_existing_complete_primary_indicator() {
             primary_indicator: Some("不存在".to_string()),
             acceptance: None,
             max_attempts: 1,
+            draw_index: 1,
         },
     );
     let err = compute_random_grouping(dataset.clone(), missing_key, stat_config(&[BW]))
@@ -622,6 +627,7 @@ fn method_and_parameters_must_agree() {
             primary_indicator: None,
             acceptance: Some(AcceptanceCriterion::AlphaLine),
             max_attempts: 10,
+            draw_index: 1,
         },
     );
     assert!(compute_random_grouping(dataset.clone(), mismatched, stat_config(&[BW])).is_err());
@@ -648,6 +654,7 @@ fn top_fraction_is_rejected_until_it_is_implemented() {
             primary_indicator: None,
             acceptance: Some(AcceptanceCriterion::TopFraction { target_rate: 0.10 }),
             max_attempts: 10,
+            draw_index: 1,
         },
     );
 
@@ -773,6 +780,7 @@ fn the_recorded_draw_belongs_to_the_accepted_attempt() {
             primary_indicator: None,
             acceptance: Some(AcceptanceCriterion::AlphaLine),
             max_attempts: 1000,
+            draw_index: 1,
         },
     );
     let result = run(dataset_60f(), config, stat_config(&[BW, CD45]));
@@ -808,4 +816,84 @@ fn draws_are_uniform_reproducible_and_absent_from_optimization() {
     assert!(draws(&first)
         .iter()
         .all(|(_, _, block)| matches!(block, Some(b) if (1..=20).contains(b))));
+}
+
+// ---------------------------------------------------------------- per-draw seed derivation
+
+#[test]
+fn draw_one_uses_the_base_seed_verbatim() {
+    let config = group_config(female_constraints(3, 20), GroupingMethod::Random, plain(42));
+    let record = run(dataset_60f(), config, stat_config(&[BW, CD45]))
+        .randomization
+        .unwrap();
+
+    assert_eq!(record.seed, 42);
+    assert_eq!(record.base_seed, 42);
+    assert_eq!(record.draw_index, 1);
+}
+
+#[test]
+fn later_draws_are_reproducible_distinct_and_replayable_from_their_seed() {
+    let make = |k: usize| {
+        let mut config = plain(42);
+        config.draw_index = k;
+        group_config(female_constraints(3, 20), GroupingMethod::Random, config)
+    };
+    let stats = || stat_config(&[BW, CD45]);
+
+    let draw2a = run(dataset_60f(), make(2), stats());
+    let draw2b = run(dataset_60f(), make(2), stats());
+    let draw3 = run(dataset_60f(), make(3), stats());
+    let draw1 = run(dataset_60f(), make(1), stats());
+
+    assert_eq!(allocation(&draw2a), allocation(&draw2b));
+    assert_ne!(allocation(&draw2a), allocation(&draw3));
+    assert_ne!(allocation(&draw1), allocation(&draw2a));
+
+    let record = draw2a.randomization.clone().unwrap();
+    assert_eq!(record.base_seed, 42);
+    assert_eq!(record.draw_index, 2);
+    assert_ne!(
+        record.seed, 42,
+        "the effective seed must be the derived one"
+    );
+
+    // The recorded effective seed alone must replay the allocation — this is the
+    // reproduction contract QA relies on, with no knowledge of the derivation.
+    let replayed = run(
+        dataset_60f(),
+        group_config(
+            female_constraints(3, 20),
+            GroupingMethod::Random,
+            plain(record.seed),
+        ),
+        stats(),
+    );
+    assert_eq!(allocation(&draw2a), allocation(&replayed));
+}
+
+#[test]
+fn the_exported_draw_reproduces_a_later_draw() {
+    let mut config = plain(42);
+    config.draw_index = 3;
+    let result = run(
+        dataset_60f(),
+        group_config(female_constraints(3, 20), GroupingMethod::Random, config),
+        stat_config(&[BW, CD45]),
+    );
+    assert_eq!(replay(&result, &[20, 20, 20], 1), allocation(&result));
+}
+
+#[test]
+fn draw_index_zero_is_rejected() {
+    let mut config = plain(42);
+    config.draw_index = 0;
+    let err = compute_random_grouping(
+        dataset_60f(),
+        group_config(female_constraints(3, 20), GroupingMethod::Random, config),
+        stat_config(&[BW, CD45]),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("抽签序号"), "{err}");
 }
