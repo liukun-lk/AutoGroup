@@ -50,10 +50,9 @@ pub fn compute_random_grouping(
 
     let plan = build_plan(&dataset, &group_config, &rand_config, &order)?;
 
-    let max_attempts = if rand_config.enforce_criteria {
-        rand_config.max_attempts.max(1)
-    } else {
-        1
+    let max_attempts = match rand_config.acceptance {
+        None => 1,
+        Some(_) => rand_config.max_attempts.max(1),
     };
 
     let mut scratch = evaluator::EvalScratch::default();
@@ -64,10 +63,10 @@ pub fn compute_random_grouping(
     for attempt in 1..=max_attempts {
         let draw = plan.draw(&mut rng);
 
-        if !rand_config.enforce_criteria {
+        let Some(criterion) = rand_config.acceptance else {
             accepted = Some((draw, attempt));
             break;
-        }
+        };
 
         let score = evaluator::score_candidate(
             &draw.candidate,
@@ -79,7 +78,12 @@ pub fn compute_random_grouping(
         )?;
         observed_min_p.push(score.min_p_value);
 
-        if score.meets_criteria(stat_config.mode) {
+        let ok = match criterion {
+            AcceptanceCriterion::AlphaLine => score.meets_criteria(stat_config.mode),
+            // Rejected by validate_randomization until the calibration lands (Task 4).
+            AcceptanceCriterion::TopFraction { .. } => unreachable!("rejected in validation"),
+        };
+        if ok {
             accepted = Some((draw, attempt));
             break;
         }
@@ -136,7 +140,7 @@ pub fn compute_random_grouping(
         input_fingerprint,
         engine_version: engine_version(),
         attempts,
-        enforce_criteria: rand_config.enforce_criteria,
+        acceptance: rand_config.acceptance,
         primary_indicator: rand_config.primary_indicator.clone(),
         block_size: plan.block_size,
         incomplete_last_block: plan.incomplete_last_block,
@@ -168,7 +172,7 @@ pub fn validate_randomization(
             if rand_config.primary_indicator.is_some() {
                 bail!("完全随机不使用主指标，请改选「按主指标分层随机」或清除主指标。");
             }
-            if rand_config.enforce_criteria {
+            if rand_config.acceptance.is_some() {
                 bail!("完全随机不带接受准则，启用接受准则请改选「受限随机化」。");
             }
         }
@@ -176,7 +180,7 @@ pub fn validate_randomization(
             if rand_config.primary_indicator.is_some() {
                 bail!("受限随机化不按指标分层，请改选「按主指标分层随机」或清除主指标。");
             }
-            if !rand_config.enforce_criteria {
+            if rand_config.acceptance.is_none() {
                 bail!("受限随机化必须启用接受准则。");
             }
         }
@@ -217,8 +221,15 @@ pub fn validate_randomization(
         }
     }
 
-    if rand_config.enforce_criteria && rand_config.max_attempts == 0 {
+    if rand_config.acceptance.is_some() && rand_config.max_attempts == 0 {
         bail!("启用接受准则时，最大抽样次数必须至少为 1。");
+    }
+
+    if matches!(
+        rand_config.acceptance,
+        Some(AcceptanceCriterion::TopFraction { .. })
+    ) {
+        bail!("增强档接受准则尚未启用。");
     }
 
     Ok(())

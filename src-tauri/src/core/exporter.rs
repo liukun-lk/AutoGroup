@@ -43,7 +43,14 @@ impl Default for SheetConfig {
 /// distribution random allocation produces, which is exactly what a reviewer checks.
 pub fn grouping_principle(result: &GroupingResult, dataset: &Dataset) -> String {
     let sex_stratified = dataset.metadata.male_count > 0 && dataset.metadata.female_count > 0;
-    let criterion_suffix = |on: bool| if on { "+ 基线均衡接受准则" } else { "" };
+    let criterion_suffix = |acceptance: Option<AcceptanceCriterion>| match acceptance {
+        None => String::new(),
+        Some(AcceptanceCriterion::AlphaLine) => "+ 基线均衡接受准则".to_string(),
+        Some(AcceptanceCriterion::TopFraction { target_rate }) => format!(
+            "+ 基线均衡接受准则（仅接受最均衡的前 {:.0}%）",
+            target_rate * 100.0
+        ),
+    };
 
     match result.method {
         GroupingMethod::Optimized => {
@@ -54,13 +61,13 @@ pub fn grouping_principle(result: &GroupingResult, dataset: &Dataset) -> String 
             }
         }
         GroupingMethod::Random | GroupingMethod::ConstrainedRandom => {
-            let enforced = result.method == GroupingMethod::ConstrainedRandom;
+            let acceptance = result.randomization.as_ref().and_then(|r| r.acceptance);
             let base = if sex_stratified {
                 "分层随机（分层变量：性别）"
             } else {
                 "完全随机"
             };
-            format!("{base}{}", criterion_suffix(enforced))
+            format!("{base}{}", criterion_suffix(acceptance))
         }
         GroupingMethod::BlockedRandom => {
             let variable = result
@@ -68,13 +75,9 @@ pub fn grouping_principle(result: &GroupingResult, dataset: &Dataset) -> String 
                 .as_ref()
                 .and_then(|r| r.primary_indicator.clone())
                 .unwrap_or_else(|| "未记录".to_string());
-            let enforced = result
-                .randomization
-                .as_ref()
-                .is_some_and(|r| r.enforce_criteria);
             format!(
                 "分层随机（分层变量：{variable}）{}",
-                criterion_suffix(enforced)
+                criterion_suffix(result.randomization.as_ref().and_then(|r| r.acceptance))
             )
         }
         GroupingMethod::Minimization => "最小化法（协变量自适应随机化）".to_string(),

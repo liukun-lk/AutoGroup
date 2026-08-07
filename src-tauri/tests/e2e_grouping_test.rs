@@ -368,8 +368,9 @@ fn each_method_exports_its_own_scenario_and_principle() {
                 seed: Some(2026),
                 primary_indicator: (method == GroupingMethod::BlockedRandom)
                     .then(|| "kg".to_string()),
-                enforce_criteria: method == GroupingMethod::ConstrainedRandom
-                    || method == GroupingMethod::BlockedRandom,
+                acceptance: (method == GroupingMethod::ConstrainedRandom
+                    || method == GroupingMethod::BlockedRandom)
+                    .then_some(AcceptanceCriterion::AlphaLine),
                 max_attempts: 10_000,
             }),
         };
@@ -488,7 +489,7 @@ fn the_exported_sheet_can_be_re_sorted_into_the_same_grouping() {
         randomization: Some(RandomizationConfig {
             seed: Some(2026),
             primary_indicator: Some("kg".to_string()),
-            enforce_criteria: false,
+            acceptance: None,
             max_attempts: 1,
         }),
     };

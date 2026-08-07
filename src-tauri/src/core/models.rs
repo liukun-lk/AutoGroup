@@ -165,6 +165,21 @@ impl GroupingMethod {
     }
 }
 
+/// Acceptance rule applied to each rejection-sampling draw. Both variants are declared
+/// before any draw happens and executed by the machine, which is what keeps them inside
+/// the restricted-randomization boundary; neither ranks candidates to pick a winner.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum AcceptanceCriterion {
+    /// Every tested indicator must clear alpha. Rejects only draws with a detectable
+    /// difference (~10% of them); balance is otherwise ordinary-random.
+    AlphaLine,
+    /// Accept only draws in the most-balanced `target_rate` fraction, ranked by min(P)
+    /// over the tested indicators. The cutoff is calibrated per dataset by a seeded
+    /// simulation, because min(P)'s scale collapses as the indicator count grows.
+    TopFraction { target_rate: f64 },
+}
+
 /// Randomization parameters. Absent for `Optimized`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RandomizationConfig {
@@ -174,9 +189,9 @@ pub struct RandomizationConfig {
     /// Indicator key used to build blocks. Required for `BlockedRandom`.
     #[serde(default)]
     pub primary_indicator: Option<String>,
-    /// Apply the acceptance criterion to the non-primary selected indicators.
+    /// Acceptance rule for rejection sampling. None means every draw is accepted.
     #[serde(default)]
-    pub enforce_criteria: bool,
+    pub acceptance: Option<AcceptanceCriterion>,
     /// Upper bound on rejection-sampling draws.
     #[serde(default = "default_max_attempts")]
     pub max_attempts: usize,
@@ -193,7 +208,7 @@ impl Default for RandomizationConfig {
         Self {
             seed: None,
             primary_indicator: None,
-            enforce_criteria: false,
+            acceptance: None,
             max_attempts: default_max_attempts(),
         }
     }
@@ -299,10 +314,8 @@ pub struct RandomizationRecord {
     pub engine_version: String,
     /// Draws consumed before acceptance.
     pub attempts: usize,
-    /// Whether the baseline-balance acceptance criterion was in force. Part of the
-    /// method description on export: blocked randomization with and without it are two
-    /// different declarations.
-    pub enforce_criteria: bool,
+    /// The acceptance rule that was in force. Part of the method description on export.
+    pub acceptance: Option<AcceptanceCriterion>,
     pub primary_indicator: Option<String>,
     pub block_size: Option<usize>,
     pub incomplete_last_block: bool,

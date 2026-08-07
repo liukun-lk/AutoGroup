@@ -663,7 +663,8 @@ mod dispatch_tests {
                 seed: Some(2026),
                 primary_indicator: (method == GroupingMethod::BlockedRandom)
                     .then(|| "体重".to_string()),
-                enforce_criteria: method != GroupingMethod::Random,
+                acceptance: (method != GroupingMethod::Random)
+                    .then_some(AcceptanceCriterion::AlphaLine),
                 max_attempts: 1000,
             });
 

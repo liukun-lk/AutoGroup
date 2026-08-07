@@ -51,7 +51,7 @@ fn blocked(seed: u64, enforce: bool) -> RandomizationConfig {
     RandomizationConfig {
         seed: Some(seed),
         primary_indicator: Some(BW.to_string()),
-        enforce_criteria: enforce,
+        acceptance: enforce.then_some(AcceptanceCriterion::AlphaLine),
         max_attempts: 1000,
     }
 }
@@ -60,7 +60,7 @@ fn plain(seed: u64) -> RandomizationConfig {
     RandomizationConfig {
         seed: Some(seed),
         primary_indicator: None,
-        enforce_criteria: false,
+        acceptance: None,
         max_attempts: 1,
     }
 }
@@ -430,7 +430,7 @@ fn tied_primary_values_still_reproduce() {
         RandomizationConfig {
             seed: Some(9),
             primary_indicator: Some("x".to_string()),
-            enforce_criteria: false,
+            acceptance: None,
             max_attempts: 1,
         },
     );
@@ -550,7 +550,7 @@ fn exhausting_the_attempt_budget_reports_the_bottleneck_instead_of_degrading() {
         RandomizationConfig {
             seed: Some(1),
             primary_indicator: None,
-            enforce_criteria: true,
+            acceptance: Some(AcceptanceCriterion::AlphaLine),
             max_attempts: 5,
         },
     );
@@ -585,7 +585,7 @@ fn blocked_random_requires_an_existing_complete_primary_indicator() {
         RandomizationConfig {
             seed: Some(1),
             primary_indicator: Some("不存在".to_string()),
-            enforce_criteria: false,
+            acceptance: None,
             max_attempts: 1,
         },
     );
@@ -620,7 +620,7 @@ fn method_and_parameters_must_agree() {
         RandomizationConfig {
             seed: Some(1),
             primary_indicator: None,
-            enforce_criteria: true,
+            acceptance: Some(AcceptanceCriterion::AlphaLine),
             max_attempts: 10,
         },
     );
@@ -747,7 +747,7 @@ fn the_recorded_draw_belongs_to_the_accepted_attempt() {
         RandomizationConfig {
             seed: Some(5),
             primary_indicator: None,
-            enforce_criteria: true,
+            acceptance: Some(AcceptanceCriterion::AlphaLine),
             max_attempts: 1000,
         },
     );
