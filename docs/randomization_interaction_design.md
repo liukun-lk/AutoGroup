@@ -6,7 +6,7 @@
 >
 > 文档版本: v0.1
 > 创建日期: 2026-08-07
-> 状态: 方案已确认，待实施
+> 状态: 已实施
 > 前置依赖: randomization_design.md 第七、八章（`Random` / `ConstrainedRandom` /
 > `BlockedRandom` 与种子契约已实现，见 `src-tauri/src/core/grouping/randomizer.rs`）
 
