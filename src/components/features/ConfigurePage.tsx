@@ -15,6 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ArrowLeft, ArrowRight, Settings, Info, Dices } from "lucide-react";
 import type {
+  AcceptanceCriterion,
   GroupConfig,
   GroupingMethod,
   RandomizationConfig,
@@ -24,8 +25,11 @@ import type {
 } from "@/types";
 import { getExcludedIndicators, filterDefaultIndicators } from "@/utils/indicator-filter";
 import {
+  ACCEPTANCE_FOOTNOTE,
+  ACCEPTANCE_TIERS,
   METHODS,
   SCENARIOS,
+  TARGET_RATE_PRESETS,
   blockStructure,
   defaultMethodFor,
   disabledReason,
@@ -50,7 +54,10 @@ export function ConfigurePage() {
   const [methodNotice, setMethodNotice] = useState<string | null>(null);
   const [primaryIndicator, setPrimaryIndicator] = useState<string>("");
   const [seedText, setSeedText] = useState<string>("");
-  const [enforceCriteria, setEnforceCriteria] = useState(true);
+  const [acceptanceTier, setAcceptanceTier] = useState<"alpha" | "topfraction">("alpha");
+  const [targetRate, setTargetRate] = useState(0.1);
+  /** BlockedRandom only: whether the (optional) criterion is on at all. */
+  const [criterionOn, setCriterionOn] = useState(true);
 
   // Reserve group state
   const [reserveMaleCount, setReserveMaleCount] = useState(0);
@@ -262,19 +269,25 @@ export function ConfigurePage() {
     // The method name and the parameters have to agree — the backend rejects, say,
     // "完全随机" carrying an acceptance criterion, because the exported method
     // description would then not match what ran.
-    const criterionOn =
-      method === "ConstrainedRandom" ||
-      (method === "BlockedRandom" && enforceCriteria);
+    const wantsCriterion =
+      method === "ConstrainedRandom" || (method === "BlockedRandom" && criterionOn);
+    const acceptance: AcceptanceCriterion | null =
+      isRandomized && wantsCriterion
+        ? acceptanceTier === "topfraction"
+          ? { type: "TopFraction", target_rate: targetRate }
+          : { type: "AlphaLine" }
+        : null;
 
     const parsedSeed = seedText.trim() === "" ? null : Number(seedText.trim());
     const randomization: RandomizationConfig | null = isRandomized
       ? {
           seed: parsedSeed !== null && Number.isFinite(parsedSeed) ? parsedSeed : null,
           primary_indicator: method === "BlockedRandom" ? primaryIndicator : null,
-          enforce_criteria: criterionOn,
+          acceptance,
           // 70 indicators under Strict accept roughly one draw in 80; the budget has to
           // cover that case, and each rejected draw is cheap.
           max_attempts: 10000,
+          draw_index: 1,
         }
       : null;
 
@@ -319,7 +332,9 @@ export function ConfigurePage() {
     isRandomized,
     primaryIndicator,
     seedText,
-    enforceCriteria,
+    acceptanceTier,
+    targetRate,
+    criterionOn,
   ]);
 
   const toggleIndicator = (indicator: string) => {
@@ -545,36 +560,79 @@ export function ConfigurePage() {
           )}
 
           {isRandomized && (
-            <div className="grid grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <Label>随机种子</Label>
-                <Input
-                  type="number"
-                  value={seedText}
-                  placeholder="留空则自动生成"
-                  onChange={(e) => setSeedText(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  种子会随结果一并记录并写入导出文件，用于日后复现同一次分配。
-                </p>
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <Label>随机种子</Label>
+                  <Input
+                    type="number"
+                    value={seedText}
+                    placeholder="留空则自动生成"
+                    onChange={(e) => setSeedText(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    种子会随结果一并记录并写入导出文件，用于日后复现同一次分配。
+                  </p>
+                </div>
               </div>
 
-              {method === "BlockedRandom" && (
-                <div className="space-y-2">
-                  <Label>接受准则</Label>
-                  <div className="flex items-center space-x-2 pt-2">
-                    <Checkbox
-                      id="enforce-criteria"
-                      checked={enforceCriteria}
-                      onCheckedChange={(checked) => setEnforceCriteria(checked === true)}
-                    />
-                    <Label htmlFor="enforce-criteria" className="font-normal cursor-pointer">
-                      其余指标须满足下方「优化模式」的判定口径
-                    </Label>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    不达标时按同一随机序列重抽。这是事先声明的规则，不是看到结果后的挑选。
-                  </p>
+              {method !== "Random" && (
+                <div className="space-y-3">
+                  {method === "BlockedRandom" && (
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={criterionOn}
+                        onChange={(e) => setCriterionOn(e.target.checked)}
+                      />
+                      对其余指标启用接受准则
+                    </label>
+                  )}
+                  {(method === "ConstrainedRandom" || criterionOn) && (
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">均衡强度</div>
+                      {ACCEPTANCE_TIERS.map((tier) => (
+                        <label
+                          key={tier.value}
+                          className={`block rounded-md border p-3 cursor-pointer ${
+                            acceptanceTier === tier.value
+                              ? "border-primary bg-primary/5"
+                              : "border-muted"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="radio"
+                              name="acceptance-tier"
+                              checked={acceptanceTier === tier.value}
+                              onChange={() => setAcceptanceTier(tier.value)}
+                            />
+                            <span className="font-medium text-sm">{tier.label}</span>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {tier.description}
+                          </p>
+                        </label>
+                      ))}
+                      {acceptanceTier === "topfraction" && (
+                        <div className="flex items-center gap-2 text-sm">
+                          <span>目标接受率：</span>
+                          {TARGET_RATE_PRESETS.map((rate) => (
+                            <Button
+                              key={rate}
+                              type="button"
+                              size="sm"
+                              variant={targetRate === rate ? "default" : "outline"}
+                              onClick={() => setTargetRate(rate)}
+                            >
+                              {Math.round(rate * 100)}%
+                            </Button>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-xs text-muted-foreground">{ACCEPTANCE_FOOTNOTE}</p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

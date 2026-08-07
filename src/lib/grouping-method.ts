@@ -56,8 +56,6 @@ export interface MethodCopy {
   /** One line on the allocation mechanism, so the name is never shown on its own. */
   mechanism: string;
   requiresPrimaryIndicator: boolean;
-  /** Fixed for the methods whose name *is* the criterion setting. */
-  enforceCriteria: boolean | "user";
   implemented: boolean;
 }
 
@@ -67,7 +65,6 @@ export const METHODS: MethodCopy[] = [
     label: "按主指标分层随机",
     mechanism: "按性别与主指标分层，层内洗牌后按配额发牌；主指标的均衡由构造保证",
     requiresPrimaryIndicator: true,
-    enforceCriteria: "user",
     implemented: true,
   },
   {
@@ -75,7 +72,6 @@ export const METHODS: MethodCopy[] = [
     label: "完全随机",
     mechanism: "种子化洗牌后按配额分配，不读取任何指标值",
     requiresPrimaryIndicator: false,
-    enforceCriteria: false,
     implemented: true,
   },
   {
@@ -83,7 +79,6 @@ export const METHODS: MethodCopy[] = [
     label: "受限随机化",
     mechanism: "完全随机加基线均衡接受准则，不达标则按同一随机序列重抽",
     requiresPrimaryIndicator: false,
-    enforceCriteria: true,
     implemented: true,
   },
   {
@@ -91,7 +86,6 @@ export const METHODS: MethodCopy[] = [
     label: "最小化法",
     mechanism: "逐只分配，每次分给使不平衡度最小的组（规划中，尚未实现）",
     requiresPrimaryIndicator: false,
-    enforceCriteria: false,
     implemented: false,
   },
   {
@@ -99,10 +93,39 @@ export const METHODS: MethodCopy[] = [
     label: "统计均衡优化",
     mechanism: "枚举或采样全部候选划分，按 min(P) 与 mean(P) 择优——不是随机化",
     requiresPrimaryIndicator: false,
-    enforceCriteria: false,
     implemented: true,
   },
 ];
+
+/**
+ * Acceptance-tier copy for the randomized methods' rejection-sampling rule. Verbatim from
+ * the design doc §2.3 — do not edit the Chinese text.
+ */
+export interface AcceptanceTierCopy {
+  value: "alpha" | "topfraction";
+  label: string;
+  description: string;
+}
+
+export const ACCEPTANCE_TIERS: AcceptanceTierCopy[] = [
+  {
+    value: "alpha",
+    label: "基础档——排除可检出差异的分组",
+    description:
+      "每一签都检验全部所选指标，任何一个指标 P ≤ α 就废签重抽。只排除统计上能检出差异的约一成分组，其余一律等概率接受。均衡程度与普通随机接近，随机性保留最足。适合「不出最差情况即可」的研究。",
+  },
+  {
+    value: "topfraction",
+    label: "增强档——只接受最均衡的前 X%",
+    description:
+      "软件先在本数据上做 1000 次种子化模拟，定出「最均衡的前 X%」对应的门槛（按全部所选指标中最差的那个 P 值），再正式抽签，达不到门槛就废签重抽。全部指标一视同仁，没有主次之分。X 越小分得越匀、自动重抽越多（通常仍在毫秒级）。门槛与定标过程会写入导出文件，作为预先声明的接受准则。",
+  },
+];
+
+export const ACCEPTANCE_FOOTNOTE =
+  "两档都是抽签之前定死、由软件自动执行的规则，属于受限随机化；不构成看结果择优。";
+
+export const TARGET_RATE_PRESETS = [0.1, 0.25, 0.5];
 
 /** Mirrors `StudyScenario::allows` in the backend, which is the authority. */
 export function isMethodAllowed(scenario: StudyScenario, method: GroupingMethod): boolean {

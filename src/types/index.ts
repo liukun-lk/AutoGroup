@@ -62,15 +62,25 @@ export type GroupingMethod =
   /** Sequential covariate-adaptive minimization. Reserved, not implemented. */
   | "Minimization";
 
+/**
+ * Pre-declared acceptance rule for rejection sampling. Mirrors the Rust enum's
+ * internally-tagged serde shape.
+ */
+export type AcceptanceCriterion =
+  | { type: "AlphaLine" }
+  | { type: "TopFraction"; target_rate: number };
+
 /** Randomization parameters. Absent for `Optimized`. */
 export interface RandomizationConfig {
   /** Null lets the backend generate one and echo it back in the result. */
   seed?: number | null;
   /** Indicator key used to build blocks. Required for `BlockedRandom`. */
   primary_indicator?: string | null;
-  /** Apply the acceptance criterion to the non-primary indicators. */
-  enforce_criteria: boolean;
+  /** Null means every draw is accepted (pure randomization). */
+  acceptance: AcceptanceCriterion | null;
   max_attempts: number;
+  /** 1-based draw number within a run. Always 1 when computed from the configure page. */
+  draw_index: number;
 }
 
 export interface GroupConfig {
@@ -144,7 +154,13 @@ export interface RandomizationRecord {
   engine_version: string;
   /** Draws consumed before acceptance. */
   attempts: number;
-  enforce_criteria: boolean;
+  acceptance: AcceptanceCriterion | null;
+  /** The seed the user supplied or the backend generated. Equal to `seed` at draw 1. */
+  base_seed: number;
+  draw_index: number;
+  /** Present only for TopFraction: the calibrated min(P) cutoff. */
+  calibrated_threshold?: number | null;
+  calibration_draws?: number | null;
   primary_indicator?: string | null;
   block_size?: number | null;
   incomplete_last_block: boolean;
