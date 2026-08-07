@@ -1,8 +1,19 @@
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { resultAtom, setErrorAtom, datasetAtom, selectedIndicatorsAtom, resetStateAtom, groupConfigAtom, statConfigAtom, currentStepAtom } from "@/stores";
+import {
+  resultAtom,
+  setErrorAtom,
+  datasetAtom,
+  selectedIndicatorsAtom,
+  resetStateAtom,
+  groupConfigAtom,
+  statConfigAtom,
+  currentStepAtom,
+  groupingRunAtom,
+} from "@/stores";
+import type { MultiGroupingResult } from "@/types";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -26,6 +37,7 @@ import { METHODS, SCENARIOS } from "@/lib/grouping-method";
 import { PosthocComparisons } from "./PosthocComparisons";
 
 export function ResultsPage() {
+  const [run, setRun] = useAtom(groupingRunAtom);
   const [result] = useAtom(resultAtom);
   const [dataset] = useAtom(datasetAtom);
   const [groupConfig] = useAtom(groupConfigAtom);
@@ -34,6 +46,9 @@ export function ResultsPage() {
   const [, setError] = useAtom(setErrorAtom);
   const [, resetState] = useAtom(resetStateAtom);
   const [, setCurrentStep] = useAtom(currentStepAtom);
+  const [redrawing, setRedrawing] = useState(false);
+
+  const isGlp = groupConfig?.scenario === "GlpSubmission";
 
   const handleExport = useCallback(async () => {
     if (!result || !dataset) return;
@@ -100,6 +115,50 @@ export function ResultsPage() {
       </Alert>
     );
   }
+
+  const isRandomizedRun = result.method !== "Optimized";
+
+  const handleSelectCandidate = (index: number) => {
+    if (!run || isGlp) return;
+    setRun({ ...run, selectedIndex: index });
+  };
+
+  const handleRedraw = async () => {
+    if (!run || !dataset || !statConfig || !groupConfig?.randomization || isGlp) return;
+    const lastRecord = run.candidates[run.candidates.length - 1]?.randomization;
+    if (!lastRecord) return;
+    const nextIndex =
+      Math.max(...run.candidates.map((c) => c.randomization?.draw_index ?? 1)) + 1;
+
+    setRedrawing(true);
+    try {
+      const multi = await invoke<MultiGroupingResult>("compute_grouping", {
+        dataset,
+        groupConfig: {
+          ...groupConfig,
+          randomization: {
+            ...groupConfig.randomization,
+            // The base seed pins the whole draw sequence; the index picks the draw.
+            seed: lastRecord.base_seed,
+            draw_index: nextIndex,
+          },
+        },
+        statConfig,
+      });
+      const drawn = multi.candidates[0];
+      if (drawn) {
+        setRun({
+          ...run,
+          candidates: [...run.candidates, drawn],
+          selectedIndex: run.candidates.length,
+        });
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRedrawing(false);
+    }
+  };
 
   // Transform flat assignments into grouped structure
   const groupedAssignments = assignments.reduce<Record<number, Array<{ id: string; sex: string }>>>(
@@ -197,6 +256,62 @@ export function ResultsPage() {
         </Card>
       </div>
 
+      {/* Candidate switcher */}
+      {run && (isRandomizedRun || run.candidates.length > 1) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>候选分组</CardTitle>
+            <CardDescription>
+              {isRandomizedRun
+                ? "每一签都由（主种子，抽签序号）唯一决定，可随时复现；抽过的签全部保留"
+                : "优化模式返回的 Top-N 排名，按 min(P) 与 mean(P) 降序"}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              {run.candidates.map((candidate, index) => (
+                <Button
+                  key={index}
+                  size="sm"
+                  variant={index === run.selectedIndex ? "default" : "outline"}
+                  disabled={isGlp}
+                  onClick={() => handleSelectCandidate(index)}
+                >
+                  {isRandomizedRun
+                    ? `第 ${candidate.randomization?.draw_index ?? index + 1} 签`
+                    : `排名 #${index + 1} · min(P)=${candidate.summary.min_p_value.toFixed(4)}`}
+                </Button>
+              ))}
+              {isRandomizedRun && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={isGlp || redrawing}
+                  onClick={handleRedraw}
+                >
+                  {redrawing ? "抽签中…" : "再抽一签"}
+                </Button>
+              )}
+            </div>
+            {isGlp && (
+              <Alert>
+                <AlertDescription className="text-sm">
+                  GLP 场景执行分配隐藏：一次抽签即为最终分配，不提供看到结果后重抽或挑选的入口。
+                  需要更高的均衡度，请在计算前调整接受准则的目标接受率。
+                </AlertDescription>
+              </Alert>
+            )}
+            <p className="text-xs text-muted-foreground">
+              导出将使用当前选中的候选（
+              {isRandomizedRun
+                ? `第 ${result.randomization?.draw_index ?? run.selectedIndex + 1} 签`
+                : `排名 #${run.selectedIndex + 1}`}
+              ）。
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Method and audit trail */}
       <Card>
         <CardHeader>
@@ -244,9 +359,43 @@ export function ResultsPage() {
                   <div className="text-muted-foreground text-xs">引擎版本</div>
                   <div className="font-medium font-mono">{record.engine_version}</div>
                 </div>
+                <div>
+                  <div className="text-muted-foreground text-xs">抽签序号</div>
+                  <div className="font-medium">第 {record.draw_index} 签</div>
+                </div>
+                {record.draw_index > 1 && (
+                  <div>
+                    <div className="text-muted-foreground text-xs">主种子</div>
+                    <div className="font-medium font-mono">{record.base_seed}</div>
+                  </div>
+                )}
+                <div>
+                  <div className="text-muted-foreground text-xs">接受准则</div>
+                  <div className="font-medium">
+                    {record.acceptance == null
+                      ? "无（纯随机）"
+                      : record.acceptance.type === "AlphaLine"
+                        ? "全部所选指标 P > α"
+                        : `仅接受最均衡的前 ${Math.round(record.acceptance.target_rate * 100)}%（min(P) ≥ ${record.calibrated_threshold?.toFixed(4) ?? "—"}）`}
+                  </div>
+                </div>
               </>
             )}
           </div>
+
+          {record && (
+            <div className="rounded-md bg-muted/50 p-3 text-sm space-y-1">
+              <div className="font-medium">复现步骤</div>
+              <ol className="list-decimal list-inside text-muted-foreground space-y-0.5">
+                <li>导入同一份数据文件（软件校验输入指纹一致）；</li>
+                <li>选择相同的场景、方法与参数，在种子栏填入上方记录的随机种子；</li>
+                <li>重新计算，得到的分配与本次逐动物一致。</li>
+              </ol>
+              <p className="text-xs text-muted-foreground">
+                以上信息已随导出文件写入《汇总信息》表，归档请以导出文件为准。
+              </p>
+            </div>
+          )}
 
           {record?.primary_indicator && (
             <Alert>
