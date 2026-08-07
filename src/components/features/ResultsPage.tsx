@@ -22,6 +22,8 @@ import {
   Users,
   BarChart3,
 } from "lucide-react";
+import { METHODS, SCENARIOS } from "@/lib/grouping-method";
+import { PosthocComparisons } from "./PosthocComparisons";
 
 export function ResultsPage() {
   const [result] = useAtom(resultAtom);
@@ -63,6 +65,9 @@ export function ResultsPage() {
         selectedIndicators: indicatorsToExport,
         outputPath: filePath,
         groupConstraints: groupConfig?.sex_constraints,
+        // The declared scenario is part of "why this grouping was done this way" and is
+        // written to the summary sheet next to the principle that was actually used.
+        scenario: groupConfig?.scenario,
       });
 
       // Show success message
@@ -131,20 +136,14 @@ export function ResultsPage() {
     })
     .sort((a, b) => a.group_index - b.group_index);
 
+  const record = result.randomization ?? null;
+  const methodLabel = METHODS.find((m) => m.value === result.method)?.label ?? "统计均衡优化";
+  const scenarioLabel =
+    SCENARIOS.find((s) => s.value === groupConfig?.scenario)?.label ?? "探索性 / 非 GLP 实验";
+
   const alpha = statConfig?.alpha ?? 0.05;
   const groupLabels = new Map(groups.map((g) => [g.group_index, g.label]));
   const labelFor = (groupId: number) => groupLabels.get(groupId) ?? `第 ${groupId + 1} 组`;
-
-  // Pairwise post-hoc comparisons, flattened for display. Empty for two-group designs,
-  // which have no post-hoc stage.
-  const posthocRows = statistics.flatMap((stat) =>
-    (stat.posthoc_results ?? []).map((comparison) => ({
-      key: `${stat.indicator_name}-${comparison.group1_id}-${comparison.group2_id}`,
-      indicator_name: stat.indicator_name,
-      test_method: stat.test_method,
-      ...comparison,
-    }))
-  );
 
   return (
     <div className="container max-w-7xl mx-auto py-8 space-y-6">
@@ -196,6 +195,90 @@ export function ResultsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Method and audit trail */}
+      <Card>
+        <CardHeader>
+          <CardTitle>分组方法与可追溯性</CardTitle>
+          <CardDescription>导出文件的「汇总信息」会记录同样的内容，供审计与复现使用</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+            <div>
+              <div className="text-muted-foreground text-xs">应用场景</div>
+              <div className="font-medium">{scenarioLabel}</div>
+            </div>
+            <div>
+              <div className="text-muted-foreground text-xs">分组方式</div>
+              <div className="font-medium">{methodLabel}</div>
+            </div>
+            {record?.primary_indicator && (
+              <div>
+                <div className="text-muted-foreground text-xs">分层变量</div>
+                <div className="font-medium">
+                  {record.primary_indicator}
+                  {record.block_size ? `（区组大小 ${record.block_size}）` : ""}
+                </div>
+              </div>
+            )}
+            {record && (
+              <>
+                <div>
+                  <div className="text-muted-foreground text-xs">随机种子</div>
+                  <div className="font-medium font-mono">{record.seed}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs">随机数算法</div>
+                  <div className="font-medium font-mono">{record.rng_algorithm}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs">抽样次数</div>
+                  <div className="font-medium">{record.attempts}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs">输入指纹</div>
+                  <div className="font-medium font-mono">{record.input_fingerprint}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs">引擎版本</div>
+                  <div className="font-medium font-mono">{record.engine_version}</div>
+                </div>
+              </>
+            )}
+          </div>
+
+          {record?.primary_indicator && (
+            <Alert>
+              <AlertDescription className="text-sm">
+                <strong>{record.primary_indicator}</strong> 是本次分组的
+                <strong>分层变量</strong>，不是检验指标。分层设计下它的组间检验 P 值必然接近
+                1，这是构造的结果，不能当作「均衡性极佳」的证据。报告中应同时给出各组该指标的均值 ±
+                标准差，并注明它是分层变量。
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {!summary.meets_criteria && (
+            <Alert variant="destructive">
+              <AlertDescription className="text-sm">
+                本次分组有 {summary.num_invalid_indicators} 个指标未达到均衡要求。
+                {record
+                  ? "请勿反复更换种子重算——那是看到结果之后的挑选。可行的做法是开启接受准则，或改用按主指标分层随机，两者都是事先声明的规则。"
+                  : "可调整参与统计的指标或放宽判定口径后重算。"}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {record && summary.total_indicators !== selectedIndicators.length && (
+            <Alert>
+              <AlertDescription className="text-sm">
+                所选 {selectedIndicators.length} 个指标中，实际参与检验的为{" "}
+                {summary.total_indicators} 个：其余指标在本次划分下无法计算检验（组内取值不足或方差为零），已跳过。
+              </AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Group Assignments */}
       <Card>
@@ -348,67 +431,7 @@ export function ResultsPage() {
       </Card>
 
       {/* Pairwise post-hoc comparisons */}
-      {posthocRows.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>组间两两比较</CardTitle>
-            <CardDescription>
-              整体差异检验之外，每一对实验组之间的事后检验 P 值（Tukey HSD / Dunnett's T3），
-              共 {posthocRows.length} 组比较
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="rounded-md border max-h-[32rem] overflow-y-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>指标名称</TableHead>
-                    <TableHead>比较对</TableHead>
-                    <TableHead>检验方法</TableHead>
-                    <TableHead className="text-center">P值</TableHead>
-                    <TableHead className="text-center">状态</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {posthocRows.map((row) => (
-                    <TableRow key={row.key}>
-                      <TableCell className="font-medium">
-                        {row.indicator_name}
-                      </TableCell>
-                      <TableCell>
-                        {labelFor(row.group1_id)} vs. {labelFor(row.group2_id)}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {row.test_method}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        <span
-                          className={
-                            row.is_valid ? "text-green-600" : "text-amber-600"
-                          }
-                        >
-                          {row.p_value.toFixed(4)}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-center">
-                        {row.is_valid ? (
-                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
-                            ns
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
-                            显著
-                          </span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      <PosthocComparisons statistics={statistics} alpha={alpha} labelOf={labelFor} />
 
       {/* Action Buttons */}
       <div className="flex justify-between">
