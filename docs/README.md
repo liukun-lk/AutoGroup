@@ -13,6 +13,7 @@
 2. [实施设计方案](./implementation_design.md) - 详细代码结构、接口定义、开发路线图
 3. [数据格式规范](./data_format_spec.md) - Excel 解析规则、测试数据分析
 4. [输出格式规范](./output_format_spec.md) - 分组结果导出格式、UI 工作流
+5. [随机化分组设计方案](./randomization_design.md) - 应用场景选择、GLP 分组流程、随机化与统计均衡优化的共存方案（草案）
 
 ---
 

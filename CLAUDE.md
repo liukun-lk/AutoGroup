@@ -304,12 +304,24 @@ refactor(grouping): simplify evaluator scoring logic
 
 ### Excel Export Format (Critical)
 
-The export must use **dual-row header format** to match regulatory requirements:
-- **Row 1:** Group labels + Animal IDs (merged cells per animal)
-- **Row 2:** Sex labels ("雄性" or "雌性")
-- **Rows 3+:** Indicator names (Chinese) + values
+`分组结果` is one row per animal, under a two-row header:
+- **Row 1:** units, aligned over the indicator columns (blank over the label columns)
+- **Row 2:** `组别 | 动物编号 | 性别` [`| 区组 | 随机数`] `|` indicator display names
+- **Rows 3+:** one row per animal, plus a `均值±标准差` row after each experimental group
 
-**Never** export single-row headers with "组别 | 动物编号 | 性别" - this is an outdated format.
+This is the format in `tests/fixtures/e2e_expected_output.xlsx`, which is a real export the
+user accepted; earlier revisions of this file described a transposed layout with animals as
+columns, which neither the code nor the accepted artifact has ever produced.
+
+**`区组` and `随机数` are audit columns and appear only for the randomized methods** (`随机数`
+whenever a draw was recorded, `区组` only under blocked randomization). They are not
+decoration: the allocation *is* "sort by the draw inside the block, then deal each group its
+quota in turn", so a reviewer can re-sort the sheet in Excel and reproduce `组别` by hand —
+the same check the lab used to do with a `RAND()` column, except reproducible from a seed.
+`the_exported_sheet_can_be_re_sorted_into_the_same_grouping` in the e2e test performs exactly
+that replay against the written workbook, and `randomizer/tests.rs` does it at the model
+level. Optimization records no draw, so its export keeps the plain layout and the golden
+fixture is unaffected.
 
 Sheets written, in order: `分组结果`, then `统计结果` and `事后比较` when
 `include_statistics` is set, then `汇总信息` when `include_summary` is set. `统计结果` keeps
@@ -339,6 +351,15 @@ approximation** — the previous `q/sqrt(2) * k` shortcut pinned every compariso
 1.000000 on small samples, and the uncorrected Welch t used for T3 returned p-values ~0.2-0.4x
 the true ones. `tukey.rs` and `dunnett.rs` carry regression tests for both failure modes.
 
+**Zero-variance splits must never reach a distribution.** When every group is internally
+constant the F and t statistics degenerate to 0/0, and `statrs` panics on a NaN argument —
+this took whole runs down. `one_way_anova` (which Levene also calls), both t-tests and
+`tukey.rs::pairwise` therefore short-circuit when the spread is zero and answer from the means
+alone: equal means → P = 1, different means → P = 0. These guards are literal ports of the
+reference implementation and each carries a regression test. Welch ANOVA and Dunnett's T3 stay
+undefined for such input (`Err`; the reference returns NaN) — see `references/statistics.md` in
+the grouping skill for the full table and what the engine does with each outcome.
+
 Post-hoc p-values cost a quadrature each, so the cascade takes a `PostHocDetail`: the scoring
 pass asks for `ValidityOnly` (a cached critical value for Tukey, a bounds-based shortcut for
 T3) and only the reported Top-N candidates compute `Exact` values. Both routes give the same
@@ -355,8 +376,12 @@ For any doubt about a specific P value, cross-check with the exact reference imp
 - **Expected performance:** ~1–2 s and well under 200 MB for a 3-group, 46-indicator run over
   100 000 candidates
 
-Monte Carlo sampling already kicks in above 500 000 combinations (`enumerator.rs`), but it uses
-`thread_rng`, so large-dataset runs are not reproducible.
+Monte Carlo sampling kicks in above 500 000 combinations (`enumerator.rs`). It draws from a
+`ChaCha12Rng` handed in by the caller, not from `thread_rng`, so a run above that threshold
+reproduces itself. `compute_optimal_grouping` seeds it from the fixed `OPTIMIZED_SAMPLING_SEED`
+(optimization takes no seed from the user, but its sampling still has to be reproducible or the
+exported result cannot be recomputed). Never put `thread_rng` back on this path —
+`optimized_sampling_path_is_reproducible` in `grouping/tests.rs` guards it.
 
 **Do not reintroduce per-candidate result materialization.** `compute_optimal_grouping` scores
 every candidate with an allocation-free `CandidateScore` and builds the full `GroupingResult`

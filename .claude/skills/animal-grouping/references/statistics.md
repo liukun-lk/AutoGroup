@@ -43,8 +43,8 @@ is_valid = (p_main > α) && all(p_posthoc > α)
 **Welch ANOVA** —— 权重 `wᵢ = nᵢ/sᵢ²`，加权总均值 `x̄_w = Σwᵢx̄ᵢ/Σwᵢ`，
 `h = Σ(1−wᵢ/Σw)²/(nᵢ−1)`，
 `F = [Σwᵢ(x̄ᵢ−x̄_w)²/(k−1)] / [1 + 2(k−2)h/(k²−1)]`，df₁ = k−1，df₂ = (k²−1)/(3h)。
-组内方差为 0 时权重 `nᵢ/sᵢ²` 发散，Rust 与 Python 都会得到 NaN，`NaN > α` 为假，
-该指标因此被判为不通过——这是可接受的失败方式，但要知道原因是数据退化而非组间失衡。
+任一组内方差为 0 时权重 `nᵢ/sᵢ²` 发散：Python 返回 NaN，Rust 返回 `Err`（`FisherSnedecor::new`
+拒绝 NaN 自由度）。两边都把这种输入判为**无定义**，但后续处理不同——见下面「退化输入」。
 
 **Tukey HSD** —— `q = |x̄ᵢ−x̄ⱼ| / √(MSE(1/nᵢ+1/nⱼ)/2)`，P 值取自
 **studentized range 分布** `q(k, df_within)`。这是唯一正确的来源；用 t 分布加
@@ -53,6 +53,28 @@ Bonferroni 之类的替代都会引入方向不定的偏差（见 §3）。
 **Dunnett's T3** —— 每对用 Welch t 统计量与 Welch df，然后按
 **studentized maximum modulus** 分布（C = k(k−1)/2 个比较）做多重性校正。
 没有这一步校正就不是 T3，只是裸的两两 Welch t 检验。
+
+### 退化输入（组内方差为 0）
+
+只要某次划分让**每个组内部各自恒定**，检验统计量就退化成 `0/0`。这不是罕见构造：随机化路径
+每抽一次都可能让某个指标在某组内取值全同，而抽出来的那个划分就是最终分配，没有别的候选可退。
+处理方式与 Python 参考实现逐字一致——**没有离散度可言时，答案由均值是否相等直接决定**：
+
+| 位置 | 条件 | 返回 |
+| --- | --- | --- |
+| `one_way_anova`（Levene 也走它） | `SSW ≤ 0` | 均值全同 → 1.0，否则 → 0.0 |
+| `student_ttest` / `welch_ttest` | `SE ≤ 0` | 两均值相等 → 1.0，否则 → 0.0 |
+| `tukey_hsd` / `tukey_all_valid` | 该对的 `SE ≤ 0` | 两均值相等 → 1.0，否则 → 0.0 |
+| `welch_anova` / Dunnett's T3 | 任一组方差为 0 | Python NaN / Rust `Err`：**无定义**，不产出 P 值 |
+
+前三行必须成对存在。缺了它们，`FisherSnedecor::cdf(NaN)` 与 `StudentsT::cdf(NaN)` 会在 statrs
+内部 `unwrap()` 上 **panic**，整次运行崩掉；Tukey 则会给出一整列 NaN，静默读作「不通过」，
+而实际上三个完全相同的组是最均衡的情形。Tukey 的两条路径（`ValidityOnly` 快捷判定与 `Exact`
+精确 P 值）共用同一个 `pairwise` 判定，退化分支也不例外——两者结论必须一致，这条有单测钉住。
+
+最后一行的「无定义」在引擎里由 `evaluator::Untestable` 决定后果：优化路径用 `Abort`（丢弃该候选，
+反正还有十万个），随机化路径用 `Skip`（跳过该指标，与「组内有效值不足 2 个」同一约定）。因此
+随机化结果里 `total_indicators` 可能小于用户所选指标数，报告通过率时必须把两者一起报。
 
 ## 3. Rust 与精确实现的一致性
 
