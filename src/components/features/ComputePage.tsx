@@ -5,7 +5,7 @@ import {
   datasetAtom,
   groupConfigAtom,
   statConfigAtom,
-  resultAtom,
+  groupingRunAtom,
   currentStepAtom,
   setErrorAtom,
 } from "@/stores";
@@ -20,7 +20,7 @@ export function ComputePage() {
   const [dataset] = useAtom(datasetAtom);
   const [groupConfig] = useAtom(groupConfigAtom);
   const [statConfig] = useAtom(statConfigAtom);
-  const [, setResult] = useAtom(resultAtom);
+  const [, setRun] = useAtom(groupingRunAtom);
   const [, setCurrentStep] = useAtom(currentStepAtom);
   const [, setError] = useAtom(setErrorAtom);
 
@@ -96,8 +96,12 @@ export function ComputePage() {
             return b.summary.mean_p_value - a.summary.mean_p_value;
           });
 
-          const bestResult = sortedCandidates[0];
-          setResult(bestResult);
+          setRun({
+            candidates: sortedCandidates,
+            selectedIndex: 0,
+            totalEvaluated: multiResult.total_evaluated,
+            totalValid: multiResult.total_valid,
+          });
           setStatus("success");
 
           // Auto-navigate to results after a brief delay
@@ -121,7 +125,7 @@ export function ComputePage() {
         clearInterval(progressInterval);
       }
     };
-  }, [dataset, groupConfig, statConfig, setResult, setCurrentStep, setError]);
+  }, [dataset, groupConfig, statConfig, setRun, setCurrentStep, setError]);
 
   return (
     <div className="container max-w-4xl mx-auto py-8">
