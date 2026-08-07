@@ -634,6 +634,30 @@ fn method_and_parameters_must_agree() {
     assert!(compute_random_grouping(dataset, no_criterion, stat_config(&[BW])).is_err());
 }
 
+/// `TopFraction` is declared in the enum but not implemented yet: `validate_randomization`
+/// must refuse it before any draw happens, rather than falling through to the
+/// `unreachable!()` in the compute loop. This test is temporary — a later task implements
+/// the calibration and replaces it with one asserting the criterion actually works.
+#[test]
+fn top_fraction_is_rejected_until_it_is_implemented() {
+    let config = group_config(
+        female_constraints(3, 20),
+        GroupingMethod::ConstrainedRandom,
+        RandomizationConfig {
+            seed: Some(1),
+            primary_indicator: None,
+            acceptance: Some(AcceptanceCriterion::TopFraction { target_rate: 0.10 }),
+            max_attempts: 10,
+        },
+    );
+
+    let err = compute_random_grouping(dataset_60f(), config, stat_config(&[BW]))
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("尚未启用"), "{err}");
+}
+
 #[test]
 fn blocked_random_drives_the_primary_indicator_p_value_towards_one() {
     // Not an assertion about quality: blocking forces the stratification variable's own
