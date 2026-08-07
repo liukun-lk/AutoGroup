@@ -309,7 +309,11 @@ fn detect_data_start_row(rows: &[Vec<Data>]) -> Result<usize> {
 
 /// Detect which row contains the column headers
 ///
-/// Header row typically contains keywords like "动物编号", "性别", "AnimalID", "Sex"
+/// The primary rule is data-driven: a data row is recognizable by its second column
+/// holding a sex literal, so the header is the row directly above the first such row.
+/// Column-name keywords are only a fallback — real files name the first column
+/// `Serial#` and leave the sex column header empty, neither of which any keyword list
+/// can be relied upon to cover.
 ///
 /// Returns the row index of the header
 fn detect_header_row(rows: &[Vec<Data>]) -> Result<usize> {
@@ -319,39 +323,49 @@ fn detect_header_row(rows: &[Vec<Data>]) -> Result<usize> {
         ));
     }
 
-    // Look for header row by detecting common header keywords
+    if let Some(first_data_row) = rows.iter().position(|row| is_data_row(row)) {
+        if first_data_row >= 1 {
+            return Ok(first_data_row - 1);
+        }
+    }
+
+    // Fallback: keyword match. The *last* matching row wins — with a dual-row header
+    // whose first row carries `AnimalID` / `Sex`, taking the first match would treat the
+    // Chinese header row as data.
     let header_keywords = ["动物编号", "性别", "AnimalID", "Sex", "Animal", "ID"];
 
-    for (row_idx, row) in rows.iter().enumerate() {
-        if row.is_empty() {
-            continue;
-        }
-
-        // Check first two columns for header keywords
-        let has_header_pattern = row.iter().take(2).any(|cell| {
-            if let Some(s) = cell.get_string() {
+    let keyword_match = rows.iter().rposition(|row| {
+        row.iter().take(2).any(|cell| {
+            cell.get_string().is_some_and(|s| {
                 let lower = s.to_lowercase();
                 header_keywords
                     .iter()
                     .any(|kw| lower.contains(&kw.to_lowercase()))
-            } else {
-                false
-            }
-        });
+            })
+        })
+    });
 
-        if has_header_pattern {
-            return Ok(row_idx);
-        }
+    // A match on the very last row cannot be a header — nothing would follow it.
+    match keyword_match {
+        Some(idx) if idx + 1 < rows.len() => Ok(idx),
+        // Fallback: If no header detected, assume row 1 is header
+        _ => Ok(1),
     }
+}
 
-    // Fallback: If no header detected, assume row 1 is header
-    if rows.len() > 1 {
-        Ok(1)
-    } else {
-        Err(anyhow!(
-            "无法定位表头行。请确认第 1 列的表头为「动物编号」或 AnimalID，第 2 列为「性别」或 Sex。"
-        ))
-    }
+/// A data row carries an animal id in column 1 and a recognizable sex in column 2.
+fn is_data_row(row: &[Data]) -> bool {
+    let has_id = match row.first() {
+        Some(Data::String(s)) => !s.trim().is_empty(),
+        Some(Data::Int(_)) | Some(Data::Float(_)) => true,
+        _ => false,
+    };
+
+    has_id
+        && row
+            .get(1)
+            .and_then(|cell| cell.get_string())
+            .is_some_and(|s| Sex::from_str(s).is_ok())
 }
 
 /// Extract the file name for user-facing messages, falling back to the full path.
@@ -535,6 +549,90 @@ mod tests {
         assert_eq!(file_name_of("/tmp/data/raw.xlsx"), "raw.xlsx");
         assert_eq!(file_name_of("raw.xlsx"), "raw.xlsx");
         assert_eq!(file_name_of("/"), "/");
+    }
+
+    fn text(s: &str) -> Data {
+        Data::String(s.to_string())
+    }
+
+    /// Lab file shape: single header row, first column named `Serial#`, sex column
+    /// header left empty. No keyword matches, so only the data-driven rule finds it.
+    #[test]
+    fn detects_header_above_first_data_row_without_keywords() {
+        let rows = vec![
+            vec![text("Serial#"), Data::Empty, text("BW(g)"), text("CD45%")],
+            vec![
+                Data::Int(1),
+                text("F"),
+                Data::Float(27.9),
+                Data::Float(0.53),
+            ],
+            vec![
+                Data::Int(2),
+                text("F"),
+                Data::Float(28.4),
+                Data::Float(0.61),
+            ],
+        ];
+        assert_eq!(detect_header_row(&rows).unwrap(), 0);
+    }
+
+    /// Dual-row header whose *first* row carries `AnimalID` / `Sex`: the keyword rule
+    /// used to stop there and hand the Chinese header row to the data parser.
+    #[test]
+    fn dual_row_header_resolves_to_the_lower_row() {
+        let rows = vec![
+            vec![text("AnimalID"), text("Sex"), text("BW"), text("CD45")],
+            vec![
+                text("动物编号"),
+                text("性别"),
+                text("体重"),
+                text("CD45 比例"),
+            ],
+            vec![
+                Data::Int(1),
+                text("雌性"),
+                Data::Float(27.9),
+                Data::Float(0.53),
+            ],
+        ];
+        assert_eq!(detect_header_row(&rows).unwrap(), 1);
+    }
+
+    /// Project-standard shape: dual-row header with the first row left blank in the
+    /// first two columns. Behaviour must be unchanged.
+    #[test]
+    fn blank_first_row_dual_header_is_unchanged() {
+        let rows = vec![
+            vec![Data::Empty, Data::Empty, text("BW"), text("CD45")],
+            vec![
+                text("动物编号"),
+                text("性别"),
+                text("体重"),
+                text("CD45 比例"),
+            ],
+            vec![
+                Data::Int(1),
+                text("雌性"),
+                Data::Float(27.9),
+                Data::Float(0.53),
+            ],
+        ];
+        assert_eq!(detect_header_row(&rows).unwrap(), 1);
+    }
+
+    #[test]
+    fn parses_the_randomization_fixture() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/randomization_input_60f.xlsx"
+        );
+        let dataset = parse_excel_file(path).unwrap();
+
+        assert_eq!(dataset.metadata.total_animals, 60);
+        assert_eq!(dataset.metadata.female_count, 60);
+        assert_eq!(dataset.metadata.male_count, 0);
+        assert_eq!(dataset.indicator_names, vec!["体重", "CD45 比例"]);
     }
 
     #[test]
