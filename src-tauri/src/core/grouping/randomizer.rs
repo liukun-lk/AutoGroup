@@ -228,6 +228,15 @@ pub fn validate_randomization(
         bail!("抽签序号从 1 开始。");
     }
 
+    // The UI greys the redraw controls out under GLP, but a greyed-out button does not
+    // stop a hand-built IPC request; allocation concealment is enforced here too.
+    if group_config.scenario == StudyScenario::GlpSubmission && rand_config.draw_index > 1 {
+        bail!(
+            "GLP 场景执行分配隐藏：一次抽签即为最终分配，不提供重抽入口（抽签序号必须为 1）。\
+             需要更高的均衡度，请在计算前调整接受准则。"
+        );
+    }
+
     if rand_config.acceptance.is_some() && rand_config.max_attempts == 0 {
         bail!("启用接受准则时，最大抽样次数必须至少为 1。");
     }

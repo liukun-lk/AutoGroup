@@ -897,3 +897,20 @@ fn draw_index_zero_is_rejected() {
     .to_string();
     assert!(err.contains("抽签序号"), "{err}");
 }
+
+#[test]
+fn glp_scenario_rejects_redraws() {
+    let mut rand_config = plain(42);
+    rand_config.draw_index = 2;
+    let mut config = group_config(
+        female_constraints(3, 20),
+        GroupingMethod::Random,
+        rand_config,
+    );
+    config.scenario = StudyScenario::GlpSubmission;
+
+    let err = compute_random_grouping(dataset_60f(), config, stat_config(&[BW, CD45]))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("分配隐藏"), "{err}");
+}
