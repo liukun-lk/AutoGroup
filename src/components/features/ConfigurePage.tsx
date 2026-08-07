@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useAtom } from "jotai";
 import {
   datasetAtom,
@@ -13,9 +13,23 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ArrowLeft, ArrowRight, Settings, Info } from "lucide-react";
-import type { GroupConfig, StatConfig, SexConstraint } from "@/types";
+import { ArrowLeft, ArrowRight, Settings, Info, Dices } from "lucide-react";
+import type {
+  GroupConfig,
+  GroupingMethod,
+  RandomizationConfig,
+  SexConstraint,
+  StatConfig,
+  StudyScenario,
+} from "@/types";
 import { getExcludedIndicators, filterDefaultIndicators } from "@/utils/indicator-filter";
+import {
+  METHODS,
+  SCENARIOS,
+  blockStructure,
+  defaultMethodFor,
+  disabledReason,
+} from "@/lib/grouping-method";
 
 export function ConfigurePage() {
   const [dataset] = useAtom(datasetAtom);
@@ -29,6 +43,14 @@ export function ConfigurePage() {
   const [animalsPerGroup, setAnimalsPerGroup] = useState(5);
   const [alpha, setAlpha] = useState(0.05);
   const [mode, setMode] = useState<"Strict" | "Optimized">("Strict");
+
+  // Scenario first, method second: the scenario decides which methods are on offer.
+  const [scenario, setScenario] = useState<StudyScenario>("Exploratory");
+  const [method, setMethod] = useState<GroupingMethod>(defaultMethodFor("Exploratory"));
+  const [methodNotice, setMethodNotice] = useState<string | null>(null);
+  const [primaryIndicator, setPrimaryIndicator] = useState<string>("");
+  const [seedText, setSeedText] = useState<string>("");
+  const [enforceCriteria, setEnforceCriteria] = useState(true);
 
   // Reserve group state
   const [reserveMaleCount, setReserveMaleCount] = useState(0);
@@ -53,6 +75,38 @@ export function ConfigurePage() {
   const surplus = availableAnimals - requiredAnimals;
   const hasConflict = surplus !== 0;
   const canDivideEvenly = availableAnimals % numGroups === 0;
+
+  // Switching scenarios resets the method to that scenario's default and says so;
+  // silently swapping it would leave the user believing they were still running the
+  // method they picked. Primary indicator, seed and reserve settings are kept.
+  const scenarioInitialized = useRef(false);
+  useEffect(() => {
+    if (!scenarioInitialized.current) {
+      scenarioInitialized.current = true;
+      return;
+    }
+
+    const next = defaultMethodFor(scenario);
+    setMethod((current) => {
+      if (current === next) return current;
+      const name = (m: GroupingMethod) => METHODS.find((entry) => entry.value === m)?.label ?? m;
+      setMethodNotice(`分组方式已从「${name(current)}」改为「${name(next)}」`);
+      return next;
+    });
+  }, [scenario]);
+
+  const selectedMethod = METHODS.find((m) => m.value === method);
+  const isRandomized =
+    method === "Random" || method === "ConstrainedRandom" || method === "BlockedRandom";
+
+  // Only indicators every animal actually has a number for can define blocks: an animal
+  // without a value has no block to sit in. This is the same rule the backend enforces.
+  const numericIndicators = useMemo(() => {
+    if (!dataset) return [];
+    return dataset.indicator_names.filter((name) =>
+      dataset.animals.every((animal) => typeof animal.indicators[name] === "number")
+    );
+  }, [dataset]);
 
   // Initialize default selected indicators (only once per dataset)
   useEffect(() => {
@@ -205,11 +259,33 @@ export function ConfigurePage() {
       };
     }
 
+    // The method name and the parameters have to agree — the backend rejects, say,
+    // "完全随机" carrying an acceptance criterion, because the exported method
+    // description would then not match what ran.
+    const criterionOn =
+      method === "ConstrainedRandom" ||
+      (method === "BlockedRandom" && enforceCriteria);
+
+    const parsedSeed = seedText.trim() === "" ? null : Number(seedText.trim());
+    const randomization: RandomizationConfig | null = isRandomized
+      ? {
+          seed: parsedSeed !== null && Number.isFinite(parsedSeed) ? parsedSeed : null,
+          primary_indicator: method === "BlockedRandom" ? primaryIndicator : null,
+          enforce_criteria: criterionOn,
+          // 70 indicators under Strict accept roughly one draw in 80; the budget has to
+          // cover that case, and each rejected draw is cheap.
+          max_attempts: 10000,
+        }
+      : null;
+
     // Build group config using complete constraints
     const groupConfig: GroupConfig = {
       num_groups: allConstraints.length,
       animals_per_group: animalGroupSize,
       sex_constraints: allConstraints,
+      scenario,
+      method,
+      randomization,
     };
 
     // Build stat config
@@ -238,6 +314,12 @@ export function ConfigurePage() {
     canDivideEvenly,
     surplus,
     availableAnimals,
+    scenario,
+    method,
+    isRandomized,
+    primaryIndicator,
+    seedText,
+    enforceCriteria,
   ]);
 
   const toggleIndicator = (indicator: string) => {
@@ -280,10 +362,226 @@ export function ConfigurePage() {
 
   const hasSelectedIndicators = selectedIndicators.length > 0;
 
-  const isValid = areSexConstraintsValid && hasSelectedIndicators;
+  // Reserve animals are drawn through the same blocks as the experimental groups, so
+  // they carry a quota in every block and the preview has to include them.
+  const allConstraintsForPreview: SexConstraint[] =
+    reserveMaleCount + reserveFemaleCount > 0
+      ? [
+          ...sexConstraints,
+          {
+            group_index: numGroups,
+            male_count: reserveMaleCount,
+            female_count: reserveFemaleCount,
+            group_type: "Reserve",
+            custom_name: "备用动物",
+          },
+        ]
+      : sexConstraints;
+
+  // Blocking has nothing to cut blocks along until a primary indicator is chosen, and
+  // the software deliberately does not pick one — only the experimenter knows which
+  // indicator the study hinges on.
+  const needsPrimaryIndicator = method === "BlockedRandom" && primaryIndicator === "";
+  const methodImplemented = selectedMethod?.implemented ?? false;
+
+  const isValid =
+    areSexConstraintsValid && hasSelectedIndicators && !needsPrimaryIndicator && methodImplemented;
+
+  const scenarioCopy = SCENARIOS.find((s) => s.value === scenario);
+
+  // Block structure preview, computed per sex stratum exactly as the backend does.
+  const blockPreview =
+    method === "BlockedRandom"
+      ? (["male", "female"] as const)
+          .map((sex) => {
+            const quotas = allConstraintsForPreview.map((c) =>
+              sex === "male" ? c.male_count : c.female_count
+            );
+            return { sex, structure: blockStructure(quotas) };
+          })
+          .filter((entry) => entry.structure !== null)
+      : [];
 
   return (
     <div className="container max-w-6xl mx-auto py-8 space-y-6">
+      {/* Scenario — the first decision, and the one that narrows everything else */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Info className="h-5 w-5" />
+            应用场景
+          </CardTitle>
+          <CardDescription>
+            先声明这次分组用在什么场景，软件据此推荐分组方式并禁用与之冲突的方法
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-3 gap-3">
+            {SCENARIOS.map((entry) => (
+              <button
+                key={entry.value}
+                type="button"
+                onClick={() => setScenario(entry.value)}
+                className={`rounded-lg border-2 p-3 text-left text-sm transition ${
+                  scenario === entry.value
+                    ? "border-primary bg-primary/5 font-medium"
+                    : "border-muted hover:border-muted-foreground/40"
+                }`}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </div>
+
+          {scenarioCopy && (
+            <div className="bg-muted/50 rounded-lg p-4 space-y-2 text-sm">
+              <p className="text-muted-foreground">{scenarioCopy.description}</p>
+              <p>
+                <span className="font-medium">推荐：</span>
+                {scenarioCopy.recommendation}
+              </p>
+              <p className="text-muted-foreground">
+                <span className="font-medium text-foreground">理由：</span>
+                {scenarioCopy.reason}
+              </p>
+              {scenarioCopy.restriction && (
+                <p className="text-amber-700">
+                  <span className="font-medium">限制：</span>
+                  {scenarioCopy.restriction}
+                </p>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Method */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Dices className="h-5 w-5" />
+            分组方式
+          </CardTitle>
+          <CardDescription>默认值由场景决定；禁用项会说明原因，不会静默隐藏</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {methodNotice && (
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription>{methodNotice}</AlertDescription>
+            </Alert>
+          )}
+
+          <div className="space-y-2">
+            {METHODS.map((entry) => {
+              const reason = disabledReason(scenario, entry.value);
+              const disabled = reason !== null;
+              return (
+                <label
+                  key={entry.value}
+                  className={`flex items-start gap-3 rounded-lg border p-3 ${
+                    disabled
+                      ? "opacity-50 cursor-not-allowed"
+                      : "cursor-pointer hover:border-muted-foreground/40"
+                  } ${method === entry.value ? "border-primary bg-primary/5" : "border-muted"}`}
+                >
+                  <input
+                    type="radio"
+                    className="mt-1 h-4 w-4"
+                    disabled={disabled}
+                    checked={method === entry.value}
+                    onChange={() => {
+                      setMethodNotice(null);
+                      setMethod(entry.value);
+                    }}
+                  />
+                  <div className="space-y-0.5">
+                    <div className="text-sm font-medium">{entry.label}</div>
+                    <div className="text-xs text-muted-foreground">{entry.mechanism}</div>
+                    {disabled && <div className="text-xs text-amber-700">{reason}</div>}
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+
+          {method === "BlockedRandom" && (
+            <div className="space-y-2">
+              <Label>主指标（分层变量）</Label>
+              <select
+                className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+                value={primaryIndicator}
+                onChange={(e) => setPrimaryIndicator(e.target.value)}
+              >
+                <option value="">请选择</option>
+                {numericIndicators.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                只列出全部动物均有数值的指标。主指标仅用于排序分块，不参与择优。
+              </p>
+              {needsPrimaryIndicator && (
+                <p className="text-xs text-destructive">请选择主指标后才能提交</p>
+              )}
+
+              {blockPreview.length > 0 && primaryIndicator !== "" && (
+                <div className="bg-muted/50 rounded-lg p-3 text-sm space-y-1">
+                  <div className="font-medium">区组结构</div>
+                  {blockPreview.map(({ sex, structure }) => (
+                    <div key={sex} className="text-muted-foreground">
+                      {blockPreview.length > 1 && (sex === "male" ? "雄性：" : "雌性：")}
+                      每 <strong className="text-foreground">{structure!.blockSize}</strong>{" "}
+                      只{primaryIndicator}相邻的动物为一个区组，共{" "}
+                      <strong className="text-foreground">{structure!.blocks}</strong> 个区组，
+                      每区组各组取 {structure!.perBlock.join(" / ")} 只
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {isRandomized && (
+            <div className="grid grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <Label>随机种子</Label>
+                <Input
+                  type="number"
+                  value={seedText}
+                  placeholder="留空则自动生成"
+                  onChange={(e) => setSeedText(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  种子会随结果一并记录并写入导出文件，用于日后复现同一次分配。
+                </p>
+              </div>
+
+              {method === "BlockedRandom" && (
+                <div className="space-y-2">
+                  <Label>接受准则</Label>
+                  <div className="flex items-center space-x-2 pt-2">
+                    <Checkbox
+                      id="enforce-criteria"
+                      checked={enforceCriteria}
+                      onCheckedChange={(checked) => setEnforceCriteria(checked === true)}
+                    />
+                    <Label htmlFor="enforce-criteria" className="font-normal cursor-pointer">
+                      其余指标须满足下方「优化模式」的判定口径
+                    </Label>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    不达标时按同一随机序列重抽。这是事先声明的规则，不是看到结果后的挑选。
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Group Configuration */}
       <Card>
         <CardHeader>

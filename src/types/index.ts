@@ -45,10 +45,41 @@ export type GroupSize =
   | { type: "Uniform"; value: number }
   | { type: "Custom"; values: number[] };
 
+/** Study scenario the user declares before anything else; it decides which methods are
+ * offered and is recorded alongside the result. */
+export type StudyScenario = "GlpSubmission" | "ConfirmatoryTrial" | "Exploratory";
+
+/**
+ * How the allocation was produced. The line that matters for a submission runs between
+ * the randomized methods and `Optimized`, which ranks candidates by their P values and
+ * is therefore not randomization at all.
+ */
+export type GroupingMethod =
+  | "Optimized"
+  | "Random"
+  | "ConstrainedRandom"
+  | "BlockedRandom"
+  /** Sequential covariate-adaptive minimization. Reserved, not implemented. */
+  | "Minimization";
+
+/** Randomization parameters. Absent for `Optimized`. */
+export interface RandomizationConfig {
+  /** Null lets the backend generate one and echo it back in the result. */
+  seed?: number | null;
+  /** Indicator key used to build blocks. Required for `BlockedRandom`. */
+  primary_indicator?: string | null;
+  /** Apply the acceptance criterion to the non-primary indicators. */
+  enforce_criteria: boolean;
+  max_attempts: number;
+}
+
 export interface GroupConfig {
   num_groups: number;
   animals_per_group: GroupSize;
   sex_constraints: SexConstraint[];
+  scenario: StudyScenario;
+  method: GroupingMethod;
+  randomization?: RandomizationConfig | null;
 }
 
 export type OptimizationMode = "Strict" | "Optimized";
@@ -63,6 +94,14 @@ export interface GroupAssignment {
   animal_id: string;
   sex: Sex;
   group_id: number;
+  /**
+   * The draw this animal received, for the randomized methods only. The allocation *is*
+   * "sort by it inside the block, then deal each group its quota", so it is exported as
+   * an audit column a reviewer can re-sort by hand.
+   */
+  random_number?: number | null;
+  /** 1-based block, for blocked randomization only. The draw is sorted within a block. */
+  block_index?: number | null;
 }
 
 /** One pairwise post-hoc comparison. Only produced for designs with >= 3 groups. */
@@ -96,11 +135,29 @@ export interface ResultSummary {
   total_indicators: number;
 }
 
+/** Everything needed to reproduce a randomized allocation years later. */
+export interface RandomizationRecord {
+  seed: number;
+  /** e.g. "chacha12". A seed alone does not pin a sequence. */
+  rng_algorithm: string;
+  input_fingerprint: string;
+  engine_version: string;
+  /** Draws consumed before acceptance. */
+  attempts: number;
+  enforce_criteria: boolean;
+  primary_indicator?: string | null;
+  block_size?: number | null;
+  incomplete_last_block: boolean;
+}
+
 export interface GroupingResult {
   assignments: GroupAssignment[];
   statistics: IndicatorStats[];
   summary: ResultSummary;
   computation_time_ms: number;
+  method: GroupingMethod;
+  /** Present for the randomized methods, always null for `Optimized`. */
+  randomization?: RandomizationRecord | null;
 }
 
 export interface MultiGroupingResult {

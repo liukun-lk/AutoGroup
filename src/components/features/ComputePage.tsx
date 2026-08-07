@@ -14,6 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import type { MultiGroupingResult } from "@/types";
+import { METHODS, SCENARIOS } from "@/lib/grouping-method";
 
 export function ComputePage() {
   const [dataset] = useAtom(datasetAtom);
@@ -35,6 +36,13 @@ export function ComputePage() {
     groupConfig?.sex_constraints
       .filter((c) => c.group_type === "Reserve")
       .reduce((sum, c) => sum + c.male_count + c.female_count, 0) ?? 0;
+
+  // Randomization draws an allocation; it does not search for a best one, and the
+  // wording on this page must not suggest otherwise.
+  const isRandomized = groupConfig ? groupConfig.method !== "Optimized" : false;
+  const methodLabel =
+    METHODS.find((m) => m.value === groupConfig?.method)?.label ?? "统计均衡优化";
+  const scenarioLabel = SCENARIOS.find((s) => s.value === groupConfig?.scenario)?.label ?? "";
 
   useEffect(() => {
     if (!dataset || !groupConfig || !statConfig) {
@@ -119,9 +127,13 @@ export function ComputePage() {
     <div className="container max-w-4xl mx-auto py-8">
       <Card>
         <CardHeader>
-          <CardTitle className="text-2xl">计算最优分组方案</CardTitle>
+          <CardTitle className="text-2xl">
+            {isRandomized ? "执行随机化分组" : "计算最优分组方案"}
+          </CardTitle>
           <CardDescription>
-            正在使用统计优化算法计算分组结果
+            {isRandomized
+              ? `正在按「${methodLabel}」抽取分组，全过程由随机种子决定`
+              : "正在使用统计优化算法计算分组结果"}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -176,6 +188,30 @@ export function ComputePage() {
             <div className="bg-muted/50 rounded-lg p-4 space-y-2">
               <h4 className="font-medium text-sm mb-3">计算参数：</h4>
               <div className="grid grid-cols-2 gap-2 text-sm">
+                <div>
+                  <span className="text-muted-foreground">应用场景:</span>
+                  <span className="ml-2 font-medium">{scenarioLabel}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground">分组方式:</span>
+                  <span className="ml-2 font-medium">{methodLabel}</span>
+                </div>
+                {groupConfig.randomization?.primary_indicator && (
+                  <div>
+                    <span className="text-muted-foreground">主指标（分层变量）:</span>
+                    <span className="ml-2 font-medium">
+                      {groupConfig.randomization.primary_indicator}
+                    </span>
+                  </div>
+                )}
+                {isRandomized && (
+                  <div>
+                    <span className="text-muted-foreground">随机种子:</span>
+                    <span className="ml-2 font-medium">
+                      {groupConfig.randomization?.seed ?? "自动生成"}
+                    </span>
+                  </div>
+                )}
                 <div>
                   <span className="text-muted-foreground">分组数量:</span>
                   <span className="ml-2 font-medium">{experimentalGroups}</span>
