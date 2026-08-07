@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { useAtom } from "jotai";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { resultAtom, setErrorAtom, datasetAtom, selectedIndicatorsAtom, resetStateAtom, groupConfigAtom, statConfigAtom } from "@/stores";
+import { resultAtom, setErrorAtom, datasetAtom, selectedIndicatorsAtom, resetStateAtom, groupConfigAtom, statConfigAtom, currentStepAtom } from "@/stores";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -33,6 +33,7 @@ export function ResultsPage() {
   const [selectedIndicators] = useAtom(selectedIndicatorsAtom);
   const [, setError] = useAtom(setErrorAtom);
   const [, resetState] = useAtom(resetStateAtom);
+  const [, setCurrentStep] = useAtom(currentStepAtom);
 
   const handleExport = useCallback(async () => {
     if (!result || !dataset) return;
@@ -438,6 +439,9 @@ export function ResultsPage() {
         <Button variant="outline" onClick={handleRestart}>
           <ArrowLeft className="mr-2 h-4 w-4" />
           重新开始
+        </Button>
+        <Button variant="outline" onClick={() => setCurrentStep("configure")}>
+          返回修改配置
         </Button>
         <Button onClick={handleExport} size="lg">
           <Download className="mr-2 h-4 w-4" />

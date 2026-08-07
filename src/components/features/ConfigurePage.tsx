@@ -6,6 +6,7 @@ import {
   statConfigAtom,
   selectedIndicatorsAtom,
   currentStepAtom,
+  groupingRunAtom,
 } from "@/stores";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,31 +38,71 @@ import {
 
 export function ConfigurePage() {
   const [dataset] = useAtom(datasetAtom);
-  const [, setGroupConfig] = useAtom(groupConfigAtom);
-  const [, setStatConfig] = useAtom(statConfigAtom);
+  const [storedGroupConfig, setGroupConfig] = useAtom(groupConfigAtom);
+  const [storedStatConfig, setStatConfig] = useAtom(statConfigAtom);
   const [selectedIndicators, setSelectedIndicators] = useAtom(selectedIndicatorsAtom);
   const [, setCurrentStep] = useAtom(currentStepAtom);
+  const [existingRun] = useAtom(groupingRunAtom);
+
+  // The previously submitted config, if any — used to hydrate every control below when
+  // the user returns from the results page via "返回修改配置".
+  const storedExperimental = useMemo(
+    () =>
+      storedGroupConfig?.sex_constraints.filter((c) => c.group_type !== "Reserve") ?? [],
+    [storedGroupConfig]
+  );
+  const storedReserve = storedGroupConfig?.sex_constraints.find(
+    (c) => c.group_type === "Reserve"
+  );
 
   // Form state
-  const [numGroups, setNumGroups] = useState(2);
-  const [animalsPerGroup, setAnimalsPerGroup] = useState(5);
-  const [alpha, setAlpha] = useState(0.05);
-  const [mode, setMode] = useState<"Strict" | "Optimized">("Strict");
+  const [numGroups, setNumGroups] = useState(() => storedExperimental.length || 2);
+  const [animalsPerGroup, setAnimalsPerGroup] = useState(() =>
+    storedGroupConfig?.animals_per_group.type === "Uniform"
+      ? storedGroupConfig.animals_per_group.value
+      : 5
+  );
+  const [alpha, setAlpha] = useState(() => storedStatConfig?.alpha ?? 0.05);
+  const [mode, setMode] = useState<"Strict" | "Optimized">(
+    () => storedStatConfig?.mode ?? "Strict"
+  );
 
   // Scenario first, method second: the scenario decides which methods are on offer.
-  const [scenario, setScenario] = useState<StudyScenario>("Exploratory");
-  const [method, setMethod] = useState<GroupingMethod>(defaultMethodFor("Exploratory"));
+  const [scenario, setScenario] = useState<StudyScenario>(
+    () => storedGroupConfig?.scenario ?? "Exploratory"
+  );
+  const [method, setMethod] = useState<GroupingMethod>(
+    () => storedGroupConfig?.method ?? defaultMethodFor("Exploratory")
+  );
   const [methodNotice, setMethodNotice] = useState<string | null>(null);
-  const [primaryIndicator, setPrimaryIndicator] = useState<string>("");
-  const [seedText, setSeedText] = useState<string>("");
-  const [acceptanceTier, setAcceptanceTier] = useState<"alpha" | "topfraction">("alpha");
-  const [targetRate, setTargetRate] = useState(0.1);
+  const [primaryIndicator, setPrimaryIndicator] = useState<string>(
+    () => storedGroupConfig?.randomization?.primary_indicator ?? ""
+  );
+  const [seedText, setSeedText] = useState<string>(
+    () => storedGroupConfig?.randomization?.seed?.toString() ?? ""
+  );
+  const [acceptanceTier, setAcceptanceTier] = useState<"alpha" | "topfraction">(() =>
+    storedGroupConfig?.randomization?.acceptance?.type === "TopFraction"
+      ? "topfraction"
+      : "alpha"
+  );
+  const [targetRate, setTargetRate] = useState(() =>
+    storedGroupConfig?.randomization?.acceptance?.type === "TopFraction"
+      ? storedGroupConfig.randomization.acceptance.target_rate
+      : 0.1
+  );
   /** BlockedRandom only: whether the (optional) criterion is on at all. */
-  const [criterionOn, setCriterionOn] = useState(true);
+  const [criterionOn, setCriterionOn] = useState(() =>
+    storedGroupConfig?.method === "BlockedRandom"
+      ? storedGroupConfig.randomization?.acceptance != null
+      : true
+  );
 
   // Reserve group state
-  const [reserveMaleCount, setReserveMaleCount] = useState(0);
-  const [reserveFemaleCount, setReserveFemaleCount] = useState(0);
+  const [reserveMaleCount, setReserveMaleCount] = useState(() => storedReserve?.male_count ?? 0);
+  const [reserveFemaleCount, setReserveFemaleCount] = useState(
+    () => storedReserve?.female_count ?? 0
+  );
 
   // Track which field user is actively controlling (for linkage logic)
   const [lastEditedField, setLastEditedField] = useState<"groups" | "animals">("groups");
@@ -134,8 +175,20 @@ export function ConfigurePage() {
   }, [dataset]);
 
   // Initialize sex constraints when numGroups or dataset changes
+  const constraintsHydrated = useRef(false);
   useEffect(() => {
     if (!dataset) return;
+
+    // On the first run after mount, prefer the constraints carried over from a
+    // previously submitted config over rebuilding an even split — otherwise returning
+    // from the results page via "返回修改配置" would silently discard hand-edited quotas.
+    if (!constraintsHydrated.current) {
+      constraintsHydrated.current = true;
+      if (storedExperimental.length > 0 && storedExperimental.length === numGroups) {
+        setSexConstraints(storedExperimental);
+        return;
+      }
+    }
 
     // Calculate available animals after reserve group allocation
     const availableMales = dataset.metadata.male_count - reserveMaleCount;
@@ -159,7 +212,7 @@ export function ConfigurePage() {
     }));
 
     setSexConstraints(initialConstraints);
-  }, [numGroups, dataset, reserveMaleCount, reserveFemaleCount]);
+  }, [numGroups, dataset, reserveMaleCount, reserveFemaleCount, storedExperimental]);
 
   // Linkage effect: auto-adjust based on last edited field
   useEffect(() => {
@@ -419,6 +472,14 @@ export function ConfigurePage() {
 
   return (
     <div className="container max-w-6xl mx-auto py-8 space-y-6">
+      {existingRun && (
+        <Alert>
+          <AlertDescription>
+            当前已有计算结果。修改配置并重新计算后，将开始新的一次运行，现有结果与其全部候选将被替换。
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Scenario — the first decision, and the one that narrows everything else */}
       <Card>
         <CardHeader>
