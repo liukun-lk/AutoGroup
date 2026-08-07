@@ -1,5 +1,6 @@
 pub mod enumerator;
 pub mod evaluator;
+pub mod randomizer;
 
 #[cfg(test)]
 mod tests;
@@ -11,9 +12,62 @@ mod real_data_test;
 mod perf_repro;
 
 use crate::core::models::*;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use evaluator::{CandidateScore, EvalScratch};
+use rand::SeedableRng;
+use rand_chacha::ChaCha12Rng;
 use rayon::prelude::*;
+
+/// Seed for the Monte Carlo path of the optimization mode.
+///
+/// Optimization takes no seed from the user — it is not a randomized method — but its
+/// candidate *sampling* above 500 000 combinations still has to be reproducible, or the
+/// exported result cannot be recomputed. A fixed constant makes the whole mode a pure
+/// function of its input again.
+const OPTIMIZED_SAMPLING_SEED: u64 = 0x4155_546F_4772_7000; // "AUToGrp\0"
+
+/// Entry point for every grouping run: validates the scenario/method combination, then
+/// dispatches to the optimization or the randomization path.
+pub fn compute_grouping(
+    dataset: Dataset,
+    group_config: GroupConfig,
+    stat_config: StatConfig,
+) -> Result<MultiGroupingResult> {
+    validate_method_selection(&group_config)?;
+
+    match group_config.method {
+        GroupingMethod::Optimized => compute_optimal_grouping(dataset, group_config, stat_config),
+        GroupingMethod::Minimization => {
+            bail!("最小化法（序贯协变量自适应随机化）暂未实现，请选择其他分组方式。")
+        }
+        _ => randomizer::compute_random_grouping(dataset, group_config, stat_config),
+    }
+}
+
+/// Enforce the scenario x method matrix in the core rather than only in the UI: this is
+/// an IPC boundary, and a greyed-out button does not stop a hand-built request. A GLP
+/// submission produced by ranking candidates on their P values is the one combination
+/// that must never be reachable.
+fn validate_method_selection(group_config: &GroupConfig) -> Result<()> {
+    if !group_config.scenario.allows(group_config.method) {
+        bail!(
+            "「{}」场景下不能使用「{}」：它按 P 值择优挑选分组，不属于随机化，\
+             写进申报材料与实际方法不符。请选择随机化类方法。",
+            group_config.scenario.to_chinese(),
+            group_config.method.to_chinese()
+        );
+    }
+
+    if group_config.method == GroupingMethod::Optimized && group_config.randomization.is_some() {
+        bail!("统计均衡优化不接受随机化参数（种子 / 主指标 / 接受准则）。");
+    }
+
+    if group_config.method.is_randomized() && group_config.randomization.is_none() {
+        bail!("随机化方法必须提供随机化参数。");
+    }
+
+    Ok(())
+}
 
 pub fn compute_optimal_grouping(
     dataset: Dataset,
@@ -23,7 +77,8 @@ pub fn compute_optimal_grouping(
     let start_time = std::time::Instant::now();
 
     // Generate all candidate groupings (enumeration for ≤50 animals)
-    let candidates = enumerator::enumerate_all(&dataset.animals, &group_config)?;
+    let mut rng = ChaCha12Rng::seed_from_u64(OPTIMIZED_SAMPLING_SEED);
+    let candidates = enumerator::enumerate_all(&dataset.animals, &group_config, &mut rng)?;
     let total_evaluated = candidates.len();
 
     // Pass 1: score every candidate in parallel.
@@ -43,6 +98,7 @@ pub fn compute_optimal_grouping(
                 &stat_config,
                 Some(&group_config.sex_constraints),
                 scratch,
+                evaluator::Untestable::Abort,
             )
             .ok()?;
 
@@ -78,6 +134,7 @@ pub fn compute_optimal_grouping(
                 &dataset,
                 &stat_config,
                 Some(&group_config.sex_constraints),
+                evaluator::Untestable::Abort,
             )
             .map(|mut result| {
                 result.computation_time_ms = start_time.elapsed().as_millis() as u64;

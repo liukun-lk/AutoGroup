@@ -1,6 +1,9 @@
+use crate::core::grouping::randomizer;
 use crate::core::models::*;
 use anyhow::{Context, Result};
 use rust_xlsxwriter::{Format, Workbook};
+
+const NOT_APPLICABLE: &str = "不适用";
 
 /// Configuration for exporting sheet content
 #[derive(Debug, Clone)]
@@ -13,6 +16,10 @@ pub struct SheetConfig {
     pub include_summary: bool,
     /// Group constraints (for custom naming and reserve group handling)
     pub group_constraints: Option<Vec<SexConstraint>>,
+    /// Scenario the run was declared under. Recorded separately from the grouping
+    /// principle: the scenario says why a grouping was done this way, the principle says
+    /// what was actually done, and a reader has to be able to spot the two disagreeing.
+    pub scenario: StudyScenario,
 }
 
 impl Default for SheetConfig {
@@ -22,7 +29,72 @@ impl Default for SheetConfig {
             include_statistics: true,
             include_summary: true,
             group_constraints: None,
+            scenario: StudyScenario::default(),
         }
+    }
+}
+
+/// The class of allocation principle this grouping belongs to, in the wording a
+/// submission needs (design doc, chapter 9).
+///
+/// The distinction that carries the weight is randomization versus a search that ranked
+/// candidates by their P values. Optimization does stratify by sex, but it must never be
+/// described as stratified *randomization*: its output sits in the far tail of the
+/// distribution random allocation produces, which is exactly what a reviewer checks.
+pub fn grouping_principle(result: &GroupingResult, dataset: &Dataset) -> String {
+    let sex_stratified = dataset.metadata.male_count > 0 && dataset.metadata.female_count > 0;
+    let criterion_suffix = |on: bool| if on { "+ 基线均衡接受准则" } else { "" };
+
+    match result.method {
+        GroupingMethod::Optimized => {
+            if sex_stratified {
+                "按性别分层 + 统计均衡优化（择优搜索式分配，非随机）".to_string()
+            } else {
+                "统计均衡优化（择优搜索式分配，非随机）".to_string()
+            }
+        }
+        GroupingMethod::Random | GroupingMethod::ConstrainedRandom => {
+            let enforced = result.method == GroupingMethod::ConstrainedRandom;
+            let base = if sex_stratified {
+                "分层随机（分层变量：性别）"
+            } else {
+                "完全随机"
+            };
+            format!("{base}{}", criterion_suffix(enforced))
+        }
+        GroupingMethod::BlockedRandom => {
+            let variable = result
+                .randomization
+                .as_ref()
+                .and_then(|r| r.primary_indicator.clone())
+                .unwrap_or_else(|| "未记录".to_string());
+            let enforced = result
+                .randomization
+                .as_ref()
+                .is_some_and(|r| r.enforce_criteria);
+            format!(
+                "分层随机（分层变量：{variable}）{}",
+                criterion_suffix(enforced)
+            )
+        }
+        GroupingMethod::Minimization => "最小化法（协变量自适应随机化）".to_string(),
+    }
+}
+
+/// What the run stratified on, as shown next to the principle.
+fn stratification_variable(result: &GroupingResult, dataset: &Dataset) -> String {
+    let sex_stratified = dataset.metadata.male_count > 0 && dataset.metadata.female_count > 0;
+
+    match (&result.method, result.randomization.as_ref()) {
+        (GroupingMethod::BlockedRandom, Some(record)) => {
+            let variable = record.primary_indicator.as_deref().unwrap_or("未记录");
+            match record.block_size {
+                Some(size) => format!("{variable}（区组大小 {size}）"),
+                None => variable.to_string(),
+            }
+        }
+        _ if sex_stratified => "性别".to_string(),
+        _ => NOT_APPLICABLE.to_string(),
     }
 }
 
@@ -34,7 +106,38 @@ struct ExportRow {
     is_reserve: bool,
     animal_id: String,
     sex: Sex,
+    random_number: Option<f64>,
+    block_index: Option<usize>,
     indicators: Vec<f64>,
+}
+
+/// The audit columns a randomized run adds to 分组结果, between 性别 and the indicators.
+///
+/// They exist so the allocation can be re-derived by hand: sort the sheet by 区组 then
+/// 随机数 and deal each group its quota in turn, and the 组别 column has to come back out.
+/// Without them the seed is only checkable by re-running this exact software; with them a
+/// reviewer can verify the mechanism in Excel, which is the check the lab already knows.
+struct AuditColumns {
+    random: bool,
+    block: bool,
+}
+
+impl AuditColumns {
+    fn of(result: &GroupingResult) -> Self {
+        Self {
+            random: result.assignments.iter().any(|a| a.random_number.is_some()),
+            block: result.assignments.iter().any(|a| a.block_index.is_some()),
+        }
+    }
+
+    fn count(&self) -> u16 {
+        u16::from(self.random) + u16::from(self.block)
+    }
+
+    /// First column holding an indicator.
+    fn first_indicator_col(&self) -> u16 {
+        3 + self.count()
+    }
 }
 
 impl ExportRow {
@@ -208,21 +311,25 @@ fn write_grouping_sheet_to(
             is_reserve,
             animal_id: assignment.animal_id.clone(),
             sex: assignment.sex,
+            random_number: assignment.random_number,
+            block_index: assignment.block_index,
             indicators: indicator_values,
         });
     }
+
+    let audit = AuditColumns::of(result);
+    let first_indicator_col = audit.first_indicator_col();
 
     // Sort rows: experimental groups first (by group_id), then reserve groups last
     export_rows.sort_by_key(|row| row.sort_key());
 
     let header_format = Format::new().set_bold();
 
-    // Row 0: Unit row (empty for first 3 columns, units from column 4+)
-    // Columns 1-3 are empty in Row 0
+    // Row 0: Unit row (empty for the label and audit columns, units from the indicators on)
     for (col_idx, indicator_key) in config.selected_indicators.iter().enumerate() {
         if let Some(metadata) = dataset.get_indicator_metadata(indicator_key) {
             if !metadata.unit.is_empty() {
-                sheet.write_string(0, (col_idx + 3) as u16, &metadata.unit)?;
+                sheet.write_string(0, col_idx as u16 + first_indicator_col, &metadata.unit)?;
             }
         }
     }
@@ -232,13 +339,27 @@ fn write_grouping_sheet_to(
     sheet.write_string_with_format(1, 1, "动物编号", &header_format)?;
     sheet.write_string_with_format(1, 2, "性别", &header_format)?;
 
+    let mut audit_col = 3u16;
+    if audit.block {
+        sheet.write_string_with_format(1, audit_col, "区组", &header_format)?;
+        audit_col += 1;
+    }
+    if audit.random {
+        sheet.write_string_with_format(1, audit_col, "随机数", &header_format)?;
+    }
+
     for (col_idx, indicator_key) in config.selected_indicators.iter().enumerate() {
         let display_name = if let Some(metadata) = dataset.get_indicator_metadata(indicator_key) {
             &metadata.display_name
         } else {
             indicator_key
         };
-        sheet.write_string_with_format(1, (col_idx + 3) as u16, display_name, &header_format)?;
+        sheet.write_string_with_format(
+            1,
+            col_idx as u16 + first_indicator_col,
+            display_name,
+            &header_format,
+        )?;
     }
 
     // Group rows by group_id for statistics calculation
@@ -261,8 +382,25 @@ fn write_grouping_sheet_to(
             sheet.write_string(current_excel_row, 1, &row.animal_id)?;
             sheet.write_string(current_excel_row, 2, row.sex_chinese())?;
 
+            let mut col = 3u16;
+            if audit.block {
+                if let Some(block) = row.block_index {
+                    sheet.write_number(current_excel_row, col, block as f64)?;
+                }
+                col += 1;
+            }
+            if audit.random {
+                if let Some(value) = row.random_number {
+                    sheet.write_number(current_excel_row, col, value)?;
+                }
+            }
+
             for (col_idx, &value) in row.indicators.iter().enumerate() {
-                sheet.write_number(current_excel_row, (col_idx + 3) as u16, value)?;
+                sheet.write_number(
+                    current_excel_row,
+                    col_idx as u16 + first_indicator_col,
+                    value,
+                )?;
             }
             current_excel_row += 1;
         }
@@ -276,6 +414,11 @@ fn write_grouping_sheet_to(
             sheet.write_number(current_excel_row, 1, (group_id + 1) as f64)?;
             sheet.write_string(current_excel_row, 2, "")?; // Empty sex column
 
+            // The audit columns hold per-animal draws; a group mean of them is meaningless.
+            for offset in 0..audit.count() {
+                sheet.write_string(current_excel_row, 3 + offset, "")?;
+            }
+
             // Calculate and write mean±std for each indicator
             for indicator_idx in 0..num_indicators {
                 let values: Vec<f64> = group_rows
@@ -285,7 +428,11 @@ fn write_grouping_sheet_to(
 
                 let (mean, std) = calculate_mean_std(&values);
                 let formatted = format!("{:.2}±{:.2}", mean, std);
-                sheet.write_string(current_excel_row, (indicator_idx + 3) as u16, &formatted)?;
+                sheet.write_string(
+                    current_excel_row,
+                    indicator_idx as u16 + first_indicator_col,
+                    &formatted,
+                )?;
             }
             current_excel_row += 1;
         }
@@ -298,6 +445,16 @@ fn write_grouping_sheet_to(
     sheet.set_column_width(0, 8)?; // Group ID
     sheet.set_column_width(1, 15)?; // Animal ID
     sheet.set_column_width(2, 8)?; // Sex
+
+    let mut col = 3u16;
+    if audit.block {
+        sheet.set_column_width(col, 8)?;
+        col += 1;
+    }
+    if audit.random {
+        // Wide enough that the digits a reviewer sorts on are actually visible.
+        sheet.set_column_width(col, 20)?;
+    }
 
     Ok(())
 }
@@ -524,7 +681,65 @@ fn write_summary_sheet(
 
     row += 1;
 
-    // Section 3: Statistical configuration
+    // Section 3: Method and audit trail.
+    //
+    // Everything a reviewer needs to tell what kind of allocation this was and to
+    // reproduce it: a seed alone does not pin a sequence, and a sequence alone does not
+    // pin the input it was applied to.
+    sheet.write_string_with_format(row, 0, "分组方法与可追溯性", &label_format)?;
+    row += 1;
+
+    sheet.write_string(row, 0, "应用场景")?;
+    sheet.write_string(row, 1, config.scenario.to_chinese())?;
+    row += 1;
+
+    sheet.write_string(row, 0, "分组方式")?;
+    sheet.write_string(row, 1, result.method.to_chinese())?;
+    row += 1;
+
+    sheet.write_string(row, 0, "分组原理")?;
+    sheet.write_string(row, 1, grouping_principle(result, dataset))?;
+    row += 1;
+
+    sheet.write_string(row, 0, "分层变量")?;
+    sheet.write_string(row, 1, stratification_variable(result, dataset))?;
+    row += 1;
+
+    let record = result.randomization.as_ref();
+
+    sheet.write_string(row, 0, "随机种子")?;
+    match record {
+        Some(r) => sheet.write_string(row, 1, r.seed.to_string())?,
+        None => sheet.write_string(row, 1, NOT_APPLICABLE)?,
+    };
+    row += 1;
+
+    sheet.write_string(row, 0, "随机数算法")?;
+    sheet.write_string(
+        row,
+        1,
+        record.map_or(NOT_APPLICABLE, |r| r.rng_algorithm.as_str()),
+    )?;
+    row += 1;
+
+    sheet.write_string(row, 0, "抽样次数")?;
+    match record {
+        Some(r) => sheet.write_number(row, 1, r.attempts as f64)?,
+        None => sheet.write_string(row, 1, NOT_APPLICABLE)?,
+    };
+    row += 1;
+
+    // Written for every mode, randomized or not: it is what pins "the same input" when
+    // a run is re-checked years later.
+    sheet.write_string(row, 0, "输入指纹")?;
+    sheet.write_string(row, 1, randomizer::dataset_fingerprint(&dataset.animals))?;
+    row += 1;
+
+    sheet.write_string(row, 0, "引擎版本")?;
+    sheet.write_string(row, 1, randomizer::engine_version())?;
+    row += 2;
+
+    // Section 4: Statistical configuration
     sheet.write_string_with_format(row, 0, "统计配置", &label_format)?;
     row += 1;
 
@@ -532,7 +747,7 @@ fn write_summary_sheet(
     sheet.write_number(row, 1, config.selected_indicators.len() as f64)?;
     row += 2;
 
-    // Section 4: Results summary
+    // Section 5: Results summary
     sheet.write_string_with_format(row, 0, "结果摘要", &label_format)?;
     row += 1;
 
@@ -649,6 +864,8 @@ mod tests {
     fn test_export_row_sorting() {
         let mut rows = vec![
             ExportRow {
+                random_number: None,
+                block_index: None,
                 group_id: 2,
                 group_name: "组3".to_string(),
                 is_reserve: false,
@@ -657,6 +874,8 @@ mod tests {
                 indicators: vec![],
             },
             ExportRow {
+                random_number: None,
+                block_index: None,
                 group_id: 1,
                 group_name: "组2".to_string(),
                 is_reserve: false,
@@ -665,6 +884,8 @@ mod tests {
                 indicators: vec![],
             },
             ExportRow {
+                random_number: None,
+                block_index: None,
                 group_id: 1,
                 group_name: "组2".to_string(),
                 is_reserve: false,
@@ -673,6 +894,8 @@ mod tests {
                 indicators: vec![],
             },
             ExportRow {
+                random_number: None,
+                block_index: None,
                 group_id: 1,
                 group_name: "组2".to_string(),
                 is_reserve: false,
@@ -681,6 +904,8 @@ mod tests {
                 indicators: vec![],
             },
             ExportRow {
+                random_number: None,
+                block_index: None,
                 group_id: 3,
                 group_name: "备用动物".to_string(),
                 is_reserve: true,
@@ -747,23 +972,33 @@ mod tests {
         };
 
         let result = GroupingResult {
+            method: GroupingMethod::Optimized,
+            randomization: None,
             assignments: vec![
                 GroupAssignment {
+                    random_number: None,
+                    block_index: None,
                     animal_id: "M001".to_string(),
                     group_id: 0,
                     sex: Sex::Male,
                 },
                 GroupAssignment {
+                    random_number: None,
+                    block_index: None,
                     animal_id: "M003".to_string(),
                     group_id: 0,
                     sex: Sex::Female,
                 },
                 GroupAssignment {
+                    random_number: None,
+                    block_index: None,
                     animal_id: "M002".to_string(),
                     group_id: 1,
                     sex: Sex::Male,
                 },
                 GroupAssignment {
+                    random_number: None,
+                    block_index: None,
                     animal_id: "M004".to_string(),
                     group_id: 1,
                     sex: Sex::Female,
@@ -791,6 +1026,7 @@ mod tests {
         };
 
         let config = SheetConfig {
+            scenario: StudyScenario::Exploratory,
             selected_indicators: vec!["Weight".to_string()],
             include_statistics: true,
             include_summary: true,

@@ -1,6 +1,7 @@
 // Integration tests for the complete grouping pipeline
 use crate::core::grouping::evaluator;
 use crate::core::{grouping, models::*};
+use rand::SeedableRng;
 use std::collections::HashMap;
 
 #[cfg(test)]
@@ -74,6 +75,9 @@ mod integration_tests {
 
         // Config: 2 groups, 5 animals each (3M+2F)
         let group_config = GroupConfig {
+            scenario: StudyScenario::Exploratory,
+            method: GroupingMethod::Optimized,
+            randomization: None,
             num_groups: 2,
             animals_per_group: GroupSize::Uniform { value: 5 },
             sex_constraints: vec![
@@ -231,6 +235,9 @@ mod integration_tests {
         };
 
         let group_config = GroupConfig {
+            scenario: StudyScenario::Exploratory,
+            method: GroupingMethod::Optimized,
+            randomization: None,
             num_groups: 2,
             animals_per_group: GroupSize::Uniform { value: 5 },
             sex_constraints: vec![
@@ -287,8 +294,12 @@ mod integration_tests {
             let (dataset, group_config, stat_config) = three_group_fixture(mode);
 
             // Reference: fully evaluate every candidate, then filter and sort.
-            let candidates =
-                grouping::enumerator::enumerate_all(&dataset.animals, &group_config).unwrap();
+            let candidates = grouping::enumerator::enumerate_all(
+                &dataset.animals,
+                &group_config,
+                &mut rand_chacha::ChaCha12Rng::seed_from_u64(0),
+            )
+            .unwrap();
             let mut reference: Vec<GroupingResult> = candidates
                 .iter()
                 .filter_map(|c| {
@@ -297,6 +308,7 @@ mod integration_tests {
                         &dataset,
                         &stat_config,
                         Some(&group_config.sex_constraints),
+                        evaluator::Untestable::Abort,
                     )
                     .ok()
                 })
@@ -460,6 +472,7 @@ mod integration_tests {
             &dataset,
             &stat_config,
             Some(&constraints),
+            evaluator::Untestable::Abort,
         )
         .unwrap();
 
@@ -529,6 +542,9 @@ mod integration_tests {
         };
 
         let group_config = GroupConfig {
+            scenario: StudyScenario::Exploratory,
+            method: GroupingMethod::Optimized,
+            randomization: None,
             num_groups: 3,
             animals_per_group: GroupSize::Uniform { value: 3 },
             sex_constraints: (0..3)
@@ -550,5 +566,150 @@ mod integration_tests {
         };
 
         (dataset, group_config, stat_config)
+    }
+}
+
+/// Regression tests for the dispatcher: which method may run under which scenario, and
+/// whether a run above the exhaustive-enumeration threshold reproduces itself.
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use crate::core::parser;
+
+    const FIXTURE_60F: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/randomization_input_60f.xlsx"
+    );
+
+    /// 60 animals into 3 groups of 20 is 5.78e26 labelled partitions, far above the
+    /// 500 000 exhaustive threshold, so this exercises the Monte Carlo path.
+    fn sampling_scale_config(scenario: StudyScenario, method: GroupingMethod) -> GroupConfig {
+        GroupConfig {
+            num_groups: 3,
+            animals_per_group: GroupSize::Uniform { value: 20 },
+            sex_constraints: (0..3)
+                .map(|i| SexConstraint {
+                    group_index: i,
+                    male_count: 0,
+                    female_count: 20,
+                    group_type: GroupType::Experimental,
+                    custom_name: None,
+                })
+                .collect(),
+            scenario,
+            method,
+            randomization: match method {
+                GroupingMethod::Optimized | GroupingMethod::Minimization => None,
+                _ => Some(RandomizationConfig::default()),
+            },
+        }
+    }
+
+    fn stat_config() -> StatConfig {
+        StatConfig {
+            selected_indicators: vec!["体重".to_string(), "CD45 比例".to_string()],
+            alpha: 0.05,
+            mode: OptimizationMode::Strict,
+            max_candidates: 3,
+        }
+    }
+
+    /// The Monte Carlo path used to draw from `thread_rng`, so any dataset above the
+    /// threshold produced a different grouping on every run and no exported result could
+    /// be recomputed.
+    #[test]
+    fn optimized_sampling_path_is_reproducible() {
+        let dataset = parser::parse_excel_file(FIXTURE_60F).unwrap();
+        let config = sampling_scale_config(StudyScenario::Exploratory, GroupingMethod::Optimized);
+
+        let first =
+            grouping::compute_grouping(dataset.clone(), config.clone(), stat_config()).unwrap();
+        let second = grouping::compute_grouping(dataset, config, stat_config()).unwrap();
+
+        assert_eq!(
+            first.candidates[0].assignments, second.candidates[0].assignments,
+            "same input must give the same allocation"
+        );
+        assert_eq!(first.total_valid, second.total_valid);
+    }
+
+    #[test]
+    fn glp_submission_rejects_optimization() {
+        let dataset = parser::parse_excel_file(FIXTURE_60F).unwrap();
+        let config = sampling_scale_config(StudyScenario::GlpSubmission, GroupingMethod::Optimized);
+
+        let err = grouping::compute_grouping(dataset, config, stat_config())
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("GLP"), "{err}");
+        assert!(
+            err.contains("择优") || err.contains("随机"),
+            "the error has to say why, not just refuse: {err}"
+        );
+    }
+
+    #[test]
+    fn every_randomized_method_runs_under_glp_submission() {
+        let dataset = parser::parse_excel_file(FIXTURE_60F).unwrap();
+
+        for method in [
+            GroupingMethod::Random,
+            GroupingMethod::ConstrainedRandom,
+            GroupingMethod::BlockedRandom,
+        ] {
+            let mut config = sampling_scale_config(StudyScenario::GlpSubmission, method);
+            config.randomization = Some(RandomizationConfig {
+                seed: Some(2026),
+                primary_indicator: (method == GroupingMethod::BlockedRandom)
+                    .then(|| "体重".to_string()),
+                enforce_criteria: method != GroupingMethod::Random,
+                max_attempts: 1000,
+            });
+
+            let result = grouping::compute_grouping(dataset.clone(), config, stat_config())
+                .unwrap_or_else(|e| panic!("{method:?} should run: {e}"));
+
+            assert_eq!(result.candidates.len(), 1, "{method:?} draws once");
+            assert_eq!(result.candidates[0].method, method);
+            assert!(result.candidates[0].randomization.is_some());
+        }
+    }
+
+    #[test]
+    fn minimization_is_refused_rather_than_silently_substituted() {
+        let dataset = parser::parse_excel_file(FIXTURE_60F).unwrap();
+        let config = sampling_scale_config(
+            StudyScenario::ConfirmatoryTrial,
+            GroupingMethod::Minimization,
+        );
+
+        let err = grouping::compute_grouping(dataset, config, stat_config())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("暂未实现"), "{err}");
+    }
+
+    /// Configs saved before scenarios existed have no `scenario` / `method` field; they
+    /// have to keep behaving exactly as they did.
+    #[test]
+    fn legacy_config_without_scenario_still_runs_optimization() {
+        let json = r#"{
+            "num_groups": 3,
+            "animals_per_group": {"type": "Uniform", "value": 20},
+            "sex_constraints": [
+                {"group_index": 0, "male_count": 0, "female_count": 20},
+                {"group_index": 1, "male_count": 0, "female_count": 20},
+                {"group_index": 2, "male_count": 0, "female_count": 20}
+            ]
+        }"#;
+
+        let config: GroupConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.scenario, StudyScenario::Exploratory);
+        assert_eq!(config.method, GroupingMethod::Optimized);
+        assert!(config.randomization.is_none());
+
+        let dataset = parser::parse_excel_file(FIXTURE_60F).unwrap();
+        assert!(grouping::compute_grouping(dataset, config, stat_config()).is_ok());
     }
 }

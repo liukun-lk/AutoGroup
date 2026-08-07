@@ -30,6 +30,21 @@ pub struct EvalScratch {
     posthoc: Vec<(usize, usize, f64)>,
 }
 
+/// What to do with an indicator whose test cannot be computed on this particular split —
+/// a group with zero variance leaves Welch's ANOVA undefined, for instance.
+///
+/// Optimization can afford [`Untestable::Abort`]: it has hundreds of thousands of other
+/// candidates and simply drops this one. Randomization cannot — the draw is the
+/// allocation, made without consulting that indicator in the first place — so it skips
+/// the indicator exactly like one with insufficient data. Either way `total_indicators`
+/// counts what was actually tested, and a caller reporting a pass rate has to compare it
+/// against the number of indicators the user selected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Untestable {
+    Abort,
+    Skip,
+}
+
 /// Score a candidate without building any per-indicator detail.
 pub fn score_candidate(
     candidate: &CandidateGrouping,
@@ -37,6 +52,7 @@ pub fn score_candidate(
     stat_config: &StatConfig,
     group_constraints: Option<&[SexConstraint]>,
     scratch: &mut EvalScratch,
+    untestable: Untestable,
 ) -> Result<CandidateScore> {
     run_indicator_tests(
         candidate,
@@ -45,6 +61,7 @@ pub fn score_candidate(
         group_constraints,
         scratch,
         None,
+        untestable,
     )
 }
 
@@ -54,7 +71,7 @@ pub fn evaluate_grouping(
     dataset: &Dataset,
     stat_config: &StatConfig,
 ) -> Result<GroupingResult> {
-    evaluate_grouping_with_constraints(candidate, dataset, stat_config, None)
+    evaluate_grouping_with_constraints(candidate, dataset, stat_config, None, Untestable::Abort)
 }
 
 /// Evaluate a candidate grouping with group constraints
@@ -64,6 +81,7 @@ pub fn evaluate_grouping_with_constraints(
     dataset: &Dataset,
     stat_config: &StatConfig,
     group_constraints: Option<&[SexConstraint]>,
+    untestable: Untestable,
 ) -> Result<GroupingResult> {
     let mut scratch = EvalScratch::default();
     let mut statistics = Vec::with_capacity(stat_config.selected_indicators.len());
@@ -75,6 +93,7 @@ pub fn evaluate_grouping_with_constraints(
         group_constraints,
         &mut scratch,
         Some(&mut statistics),
+        untestable,
     )?;
 
     // Convert candidate to assignments
@@ -86,6 +105,10 @@ pub fn evaluate_grouping_with_constraints(
                 animal_id: animal.id.clone(),
                 sex: animal.sex,
                 group_id,
+                // Filled in by the randomization path, which is the only one that has a
+                // per-animal draw to report.
+                random_number: None,
+                block_index: None,
             });
         }
     }
@@ -112,6 +135,10 @@ pub fn evaluate_grouping_with_constraints(
             total_indicators: score.total_indicators,
         },
         computation_time_ms: 0, // Will be set by caller
+        // Both are set by the caller that knows how the candidate was produced; the
+        // evaluator itself is method-agnostic.
+        method: GroupingMethod::default(),
+        randomization: None,
     })
 }
 
@@ -126,6 +153,7 @@ fn run_indicator_tests(
     group_constraints: Option<&[SexConstraint]>,
     scratch: &mut EvalScratch,
     mut collect: Option<&mut Vec<IndicatorStats>>,
+    untestable: Untestable,
 ) -> Result<CandidateScore> {
     let mut min_p = f64::MAX;
     let mut sum_p = 0.0;
@@ -184,12 +212,16 @@ fn run_indicator_tests(
             continue;
         }
 
-        let test = stats::compute_indicator_test(
+        let test = match stats::compute_indicator_test(
             &scratch.groups,
             stat_config.alpha,
             detail,
             &mut scratch.posthoc,
-        )?;
+        ) {
+            Ok(test) => test,
+            Err(_) if untestable == Untestable::Skip => continue,
+            Err(e) => return Err(e),
+        };
 
         // Strict criterion: main test AND every pairwise post-hoc comparison must have P > alpha
         let is_valid = test.diff_p_value > stat_config.alpha && test.posthoc_all_valid;

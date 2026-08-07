@@ -78,6 +78,9 @@ mod real_data_test {
         // Let's use Option 1: Group0(3M+2F=5), Group1(3M+1F=4)
 
         let group_config = GroupConfig {
+            scenario: StudyScenario::Exploratory,
+            method: GroupingMethod::Optimized,
+            randomization: None,
             num_groups: 2,
             animals_per_group: GroupSize::Custom { values: vec![5, 4] },
             sex_constraints: vec![
@@ -290,6 +293,9 @@ mod real_data_test {
         // Configure 3 groups: each with 2M+1F=3 animals
         // Total: 6M + 3F = 9 animals
         let group_config = GroupConfig {
+            scenario: StudyScenario::Exploratory,
+            method: GroupingMethod::Optimized,
+            randomization: None,
             num_groups: 3,
             animals_per_group: GroupSize::Uniform { value: 3 },
             sex_constraints: vec![

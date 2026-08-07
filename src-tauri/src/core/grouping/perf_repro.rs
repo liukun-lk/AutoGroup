@@ -75,6 +75,9 @@ fn run_case(num_exp_groups: usize, males_per_group: usize, females_per_group: us
     });
 
     let group_config = GroupConfig {
+        scenario: StudyScenario::Exploratory,
+        method: GroupingMethod::Optimized,
+        randomization: None,
         num_groups: num_exp_groups + 1,
         animals_per_group: GroupSize::Uniform {
             value: males_per_group + females_per_group,

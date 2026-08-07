@@ -1,12 +1,20 @@
 use crate::core::models::*;
 use anyhow::{anyhow, Result};
 use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::Rng;
 
 /// Generate all possible groupings through exhaustive enumeration
 /// Suitable for datasets with ≤50 animals
 /// Automatically switches to Monte Carlo sampling if combination count exceeds threshold
-pub fn enumerate_all(animals: &[Animal], config: &GroupConfig) -> Result<Vec<CandidateGrouping>> {
+///
+/// `rng` is only consumed on the sampling path. It is passed in rather than taken from
+/// the thread-local source so that a run is reproducible from its seed: any dataset above
+/// the exhaustive threshold used to produce a different grouping on every invocation.
+pub fn enumerate_all(
+    animals: &[Animal],
+    config: &GroupConfig,
+    rng: &mut impl Rng,
+) -> Result<Vec<CandidateGrouping>> {
     const MAX_EXHAUSTIVE_COMBINATIONS: usize = 500_000;
     const MONTE_CARLO_SAMPLE_SIZE: usize = 100_000;
 
@@ -50,6 +58,7 @@ pub fn enumerate_all(animals: &[Animal], config: &GroupConfig) -> Result<Vec<Can
             &female_indices,
             config,
             MONTE_CARLO_SAMPLE_SIZE,
+            rng,
         )?
     };
 
@@ -213,8 +222,8 @@ fn enumerate_multi_groups_sampling(
     female_indices: &[usize],
     config: &GroupConfig,
     sample_size: usize,
+    rng: &mut impl Rng,
 ) -> Result<Vec<CandidateGrouping>> {
-    let mut rng = thread_rng();
     let mut samples = Vec::new();
 
     for _ in 0..sample_size {
@@ -222,8 +231,8 @@ fn enumerate_multi_groups_sampling(
         let mut male_pool = male_indices.to_vec();
         let mut female_pool = female_indices.to_vec();
 
-        male_pool.shuffle(&mut rng);
-        female_pool.shuffle(&mut rng);
+        male_pool.shuffle(rng);
+        female_pool.shuffle(rng);
 
         // Sequentially assign animals to groups
         let mut groups = Vec::new();
@@ -318,7 +327,7 @@ fn binomial_coefficient(n: usize, k: usize) -> usize {
 }
 
 /// Validate that the configuration is feasible
-fn validate_config(animals: &[Animal], config: &GroupConfig) -> Result<()> {
+pub fn validate_config(animals: &[Animal], config: &GroupConfig) -> Result<()> {
     let male_count = animals.iter().filter(|a| a.sex == Sex::Male).count();
     let female_count = animals.iter().filter(|a| a.sex == Sex::Female).count();
 
@@ -406,6 +415,8 @@ fn combinations(items: &[usize], k: usize) -> Vec<Vec<usize>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
     use std::collections::HashMap;
 
     #[test]
@@ -456,6 +467,9 @@ mod tests {
 
         // Config: 2 groups, 5 animals each (3M+2F per group)
         let config = GroupConfig {
+            scenario: StudyScenario::Exploratory,
+            method: GroupingMethod::Optimized,
+            randomization: None,
             num_groups: 2,
             animals_per_group: GroupSize::Uniform { value: 5 },
             sex_constraints: vec![
@@ -476,7 +490,8 @@ mod tests {
             ],
         };
 
-        let groupings = enumerate_all(&animals, &config).unwrap();
+        let groupings =
+            enumerate_all(&animals, &config, &mut ChaCha12Rng::seed_from_u64(0)).unwrap();
 
         // Expected: C(6,3) * C(4,2) = 20 * 6 = 120
         assert_eq!(groupings.len(), 120);
@@ -510,6 +525,9 @@ mod tests {
 
         // Config requires 3 males but only 1 available
         let config = GroupConfig {
+            scenario: StudyScenario::Exploratory,
+            method: GroupingMethod::Optimized,
+            randomization: None,
             num_groups: 1,
             animals_per_group: GroupSize::Uniform { value: 2 },
             sex_constraints: vec![SexConstraint {
@@ -548,6 +566,9 @@ mod tests {
 
         // Config: 3 groups, each with 2M+1F
         let config = GroupConfig {
+            scenario: StudyScenario::Exploratory,
+            method: GroupingMethod::Optimized,
+            randomization: None,
             num_groups: 3,
             animals_per_group: GroupSize::Uniform { value: 3 },
             sex_constraints: vec![
@@ -575,7 +596,8 @@ mod tests {
             ],
         };
 
-        let groupings = enumerate_all(&animals, &config).unwrap();
+        let groupings =
+            enumerate_all(&animals, &config, &mut ChaCha12Rng::seed_from_u64(0)).unwrap();
 
         // Expected: C(6,2) * C(3,1) * C(4,2) * C(2,1) * C(2,2) * C(1,1)
         //         = 15 * 3 * 6 * 2 * 1 * 1 = 540
@@ -618,6 +640,9 @@ mod tests {
         let females = vec![6, 7, 8];
 
         let config = GroupConfig {
+            scenario: StudyScenario::Exploratory,
+            method: GroupingMethod::Optimized,
+            randomization: None,
             num_groups: 3,
             animals_per_group: GroupSize::Uniform { value: 3 },
             sex_constraints: vec![

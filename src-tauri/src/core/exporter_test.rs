@@ -103,6 +103,7 @@ mod export_integration_tests {
             &dataset,
             &stat_config,
             Some(&constraints),
+            evaluator::Untestable::Abort,
         )
         .expect("evaluation must succeed");
 
@@ -114,6 +115,7 @@ mod export_integration_tests {
         let output = output_path.to_str().unwrap().to_string();
 
         let sheet_config = exporter::SheetConfig {
+            scenario: StudyScenario::Exploratory,
             selected_indicators,
             include_statistics: true,
             include_summary: true,
@@ -221,6 +223,9 @@ mod export_integration_tests {
 
         // 9 animals (6M, 3F) → unbalanced groups
         let group_config = GroupConfig {
+            scenario: StudyScenario::Exploratory,
+            method: GroupingMethod::Optimized,
+            randomization: None,
             num_groups: 2,
             animals_per_group: GroupSize::Custom { values: vec![5, 4] },
             sex_constraints: vec![
@@ -270,6 +275,7 @@ mod export_integration_tests {
         println!("\n=== Step 3: Export to Excel ===");
 
         let sheet_config = exporter::SheetConfig {
+            scenario: StudyScenario::Exploratory,
             selected_indicators: dataset.indicator_names.clone(), // Export ALL indicators
             include_statistics: true,
             include_summary: true,
@@ -330,6 +336,9 @@ mod export_integration_tests {
             .collect::<Vec<_>>();
 
         let group_config = GroupConfig {
+            scenario: StudyScenario::Exploratory,
+            method: GroupingMethod::Optimized,
+            randomization: None,
             num_groups: 2,
             animals_per_group: GroupSize::Custom { values: vec![5, 4] },
             sex_constraints: vec![
@@ -361,6 +370,7 @@ mod export_integration_tests {
             grouping::compute_optimal_grouping(dataset.clone(), group_config, stat_config).unwrap();
 
         let sheet_config = exporter::SheetConfig {
+            scenario: StudyScenario::Exploratory,
             selected_indicators, // Only export 5 indicators
             include_statistics: true,
             include_summary: true,

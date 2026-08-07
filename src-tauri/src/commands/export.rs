@@ -7,12 +7,14 @@ pub async fn export_result(
     selected_indicators: Vec<String>,
     output_path: String,
     group_constraints: Option<Vec<SexConstraint>>,
+    scenario: Option<StudyScenario>,
 ) -> Result<(), String> {
     let sheet_config = exporter::SheetConfig {
         selected_indicators,
         include_statistics: true,
         include_summary: true,
         group_constraints,
+        scenario: scenario.unwrap_or_default(),
     };
 
     exporter::export_grouping_result(&result, &dataset, &sheet_config, &output_path)
@@ -26,12 +28,14 @@ pub async fn export_multiple_results(
     selected_indicators: Vec<String>,
     output_path: String,
     group_constraints: Option<Vec<SexConstraint>>,
+    scenario: Option<StudyScenario>,
 ) -> Result<(), String> {
     let sheet_config = exporter::SheetConfig {
         selected_indicators,
         include_statistics: true,
         include_summary: true,
         group_constraints,
+        scenario: scenario.unwrap_or_default(),
     };
 
     exporter::export_multiple_results(&multi_result, &dataset, &sheet_config, &output_path)
