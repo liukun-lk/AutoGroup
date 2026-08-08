@@ -59,7 +59,7 @@ export type GroupingMethod =
   | "Random"
   | "ConstrainedRandom"
   | "BlockedRandom"
-  /** Sequential covariate-adaptive minimization. Reserved, not implemented. */
+  /** Sequential covariate-adaptive minimization (Pocock-Simon). */
   | "Minimization";
 
 /**
@@ -81,6 +81,23 @@ export interface RandomizationConfig {
   max_attempts: number;
   /** 1-based draw number within a run. Always 1 when computed from the configure page. */
   draw_index: number;
+  /** Required for `Minimization`, rejected for every other method. */
+  minimization?: MinimizationConfig | null;
+}
+
+/** How continuous covariates are turned into levels. v1 offers tertiles only. */
+export type CovariateBinning = "Tertiles";
+
+/** Parameters of a sequential covariate-adaptive minimization run. */
+export interface MinimizationConfig {
+  /**
+   * Indicator keys balanced on. Deliberately separate from the tested indicators: what a
+   * run balances on and what it is later tested on are two different declarations.
+   */
+  covariates: string[];
+  /** Probability of allocating to a minimizer. Open interval (0, 1); default 0.8. */
+  allocation_probability: number;
+  binning: CovariateBinning;
 }
 
 export interface GroupConfig {
@@ -105,13 +122,16 @@ export interface GroupAssignment {
   sex: Sex;
   group_id: number;
   /**
-   * The draw this animal received, for the randomized methods only. The allocation *is*
-   * "sort by it inside the block, then deal each group its quota", so it is exported as
-   * an audit column a reviewer can re-sort by hand.
+   * The draw this animal received, for the pure randomization methods only. There the
+   * allocation *is* "sort by it inside the block, then deal each group its quota", so it
+   * is exported as an audit column a reviewer can re-sort by hand. Minimization leaves it
+   * null: its allocation is a decision chain, not a sort.
    */
   random_number?: number | null;
   /** 1-based block, for blocked randomization only. The draw is sorted within a block. */
   block_index?: number | null;
+  /** 1-based position in the seeded entry order, for minimization only. */
+  entry_index?: number | null;
 }
 
 /** One pairwise post-hoc comparison. Only produced for designs with >= 3 groups. */
@@ -164,6 +184,48 @@ export interface RandomizationRecord {
   primary_indicator?: string | null;
   block_size?: number | null;
   incomplete_last_block: boolean;
+  /** Present only for `Minimization`. */
+  minimization?: MinimizationRecord | null;
+}
+
+/**
+ * What a minimization run actually did. The parameters say what rule was declared; the
+ * decision log says whether it was followed, animal by animal.
+ */
+export interface MinimizationRecord {
+  covariates: string[];
+  /** Binning scheme identifier, e.g. "tertiles-within-sex". */
+  binning: string;
+  bins: CovariateBins[];
+  allocation_probability: number;
+  /** Imbalance measure identifier, e.g. "quota-normalized-range". */
+  imbalance_measure: string;
+  /** Allocation rule identifier: where the 1 - p probability mass went. */
+  allocation_rule: string;
+  decisions: MinimizationDecision[];
+}
+
+export interface CovariateBins {
+  covariate: string;
+  strata: CovariateStratumBins[];
+}
+
+export interface CovariateStratumBins {
+  sex: Sex;
+  /** Boundaries between adjacent levels; `levels === cut_points.length + 1`. */
+  cut_points: number[];
+  levels: number;
+}
+
+export interface MinimizationDecision {
+  entry_index: number;
+  animal_id: string;
+  /** Level index per covariate, aligned with `MinimizationRecord.covariates`. */
+  levels: number[];
+  /** Imbalance per group id; null where the group was not a candidate at that step. */
+  scores: (number | null)[];
+  took_minimizer: boolean;
+  group_id: number;
 }
 
 export interface GroupingResult {

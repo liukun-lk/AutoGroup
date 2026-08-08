@@ -14,7 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, CheckCircle2, AlertCircle } from "lucide-react";
 import type { MultiGroupingResult } from "@/types";
-import { METHODS, SCENARIOS } from "@/lib/grouping-method";
+import { METHODS, SCENARIOS, usesRandomSource } from "@/lib/grouping-method";
 
 export function ComputePage() {
   const [dataset] = useAtom(datasetAtom);
@@ -37,9 +37,11 @@ export function ComputePage() {
       .filter((c) => c.group_type === "Reserve")
       .reduce((sum, c) => sum + c.male_count + c.female_count, 0) ?? 0;
 
-  // Randomization draws an allocation; it does not search for a best one, and the
+  // A seeded method draws an allocation; it does not search for a best one, and the
   // wording on this page must not suggest otherwise.
-  const isRandomized = groupConfig ? groupConfig.method !== "Optimized" : false;
+  const isSeeded = groupConfig ? usesRandomSource(groupConfig.method) : false;
+  const isMinimization = groupConfig?.method === "Minimization";
+  const minimization = groupConfig?.randomization?.minimization;
   const methodLabel =
     METHODS.find((m) => m.value === groupConfig?.method)?.label ?? "统计均衡优化";
   const scenarioLabel = SCENARIOS.find((s) => s.value === groupConfig?.scenario)?.label ?? "";
@@ -132,12 +134,18 @@ export function ComputePage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-2xl">
-            {isRandomized ? "执行随机化分组" : "计算最优分组方案"}
+            {isMinimization
+              ? "执行最小化法分组"
+              : isSeeded
+                ? "执行随机化分组"
+                : "计算最优分组方案"}
           </CardTitle>
           <CardDescription>
-            {isRandomized
-              ? `正在按「${methodLabel}」抽取分组，全过程由随机种子决定`
-              : "正在枚举候选方案并评估各指标的统计均衡"}
+            {isMinimization
+              ? "正在按协变量不平衡度逐只分配，全过程由随机种子决定"
+              : isSeeded
+                ? `正在按「${methodLabel}」抽取分组，全过程由随机种子决定`
+                : "正在枚举候选方案并评估各指标的统计均衡"}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -208,7 +216,23 @@ export function ComputePage() {
                     </span>
                   </div>
                 )}
-                {isRandomized && (
+                {minimization && (
+                  <>
+                    <div>
+                      <span className="text-muted-foreground">协变量:</span>
+                      <span className="ml-2 font-medium">
+                        {minimization.covariates.join("、")}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">分配概率 p:</span>
+                      <span className="ml-2 font-medium">
+                        {minimization.allocation_probability}
+                      </span>
+                    </div>
+                  </>
+                )}
+                {isSeeded && (
                   <div>
                     <span className="text-muted-foreground">随机种子:</span>
                     <span className="ml-2 font-medium">
