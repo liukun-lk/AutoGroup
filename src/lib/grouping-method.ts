@@ -38,7 +38,7 @@ export const SCENARIOS: ScenarioCopy[] = [
     reason:
       "逐一分配受试者，每次把新个体分到使各协变量总体不平衡最小的那一组，同时保留随机成分。小样本下的均衡效果明显好于简单随机，监管机构已逐步接受。",
     restriction:
-      "序贯最小化尚未实现。现有的统计均衡优化与它目标相同、机制不同（全局择优搜索，无不平衡度量、无随机成分），导出仍按非随机标注。",
+      "最小化法要先选协变量，所以这里没有设成默认，请在下方自己选。统计均衡优化想达到的效果和它一样，但机制是全局择优搜索，既没有不平衡度量也没有随机成分，导出时会如实标为非随机。",
   },
   {
     value: "Exploratory",
@@ -84,9 +84,9 @@ export const METHODS: MethodCopy[] = [
   {
     value: "Minimization",
     label: "最小化法",
-    mechanism: "逐只分配，每次分给使不平衡度最小的组（规划中，尚未实现）",
+    mechanism: "逐只分配，每次以概率 p 分给协变量不平衡度最小的组，否则分给其它组",
     requiresPrimaryIndicator: false,
-    implemented: false,
+    implemented: true,
   },
   {
     value: "Optimized",
@@ -147,11 +147,29 @@ export function defaultMethodFor(scenario: StudyScenario): GroupingMethod {
     case "GlpSubmission":
       return "BlockedRandom";
     case "ConfirmatoryTrial":
+      // Minimization is the recommended method here, but it cannot be a *default*: it
+      // needs covariates, and a preselection that cannot be submitted without further
+      // input would fail validation every time the scenario is switched.
       return "Optimized";
     default:
       return "Random";
   }
 }
+
+/**
+ * Whether the method draws from the seeded RNG, and therefore needs a seed and produces
+ * a randomization record.
+ *
+ * Mirrors `GroupingMethod::uses_random_source` in the backend. Distinct from "is this
+ * randomization": minimization has a random component but allocates by an imbalance rule,
+ * so it needs a seed while not belonging in the pure randomization family.
+ */
+export function usesRandomSource(method: GroupingMethod): boolean {
+  return method !== "Optimized";
+}
+
+/** Default probability of allocating to a minimizer, matching the backend's default. */
+export const DEFAULT_ALLOCATION_PROBABILITY = 0.8;
 
 function gcd(a: number, b: number): number {
   return b === 0 ? a : gcd(b, a % b);

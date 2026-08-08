@@ -195,6 +195,8 @@ pub fn compute_random_grouping(
         incomplete_last_block: plan.incomplete_last_block,
         calibrated_threshold: threshold,
         calibration_draws: threshold.map(|_| CALIBRATION_DRAWS),
+        // This path never runs minimization; `minimizer.rs` builds its own record.
+        minimization: None,
     });
 
     let meets_criteria = result.summary.meets_criteria;
@@ -268,8 +270,87 @@ pub fn validate_randomization(
             bail!("统计均衡优化不走随机化路径。");
         }
         GroupingMethod::Minimization => {
-            bail!("最小化法（序贯协变量自适应随机化）暂未实现。");
+            if rand_config.primary_indicator.is_some() {
+                bail!("最小化法不按主指标分层，它靠协变量的不平衡度量来均衡。请清除主指标，或改选「按主指标分层随机」。");
+            }
+            if rand_config.acceptance.is_some() {
+                bail!("最小化法不带接受准则：它逐只分配，没有一份可以整体拒绝、重新再抽的方案。需要接受准则请改选「受限随机化」。");
+            }
+
+            let config = rand_config
+                .minimization
+                .as_ref()
+                .ok_or_else(|| anyhow!("最小化法必须指定协变量与分配概率。"))?;
+
+            if config.covariates.is_empty() {
+                bail!("最小化法至少需要一个协变量。");
+            }
+
+            let mut seen = std::collections::HashSet::new();
+            for key in &config.covariates {
+                if !seen.insert(key.as_str()) {
+                    bail!("协变量「{key}」被重复选择。");
+                }
+                if !dataset.indicator_names.iter().any(|name| name == key) {
+                    bail!("协变量「{key}」不在本次数据的指标列中。");
+                }
+
+                // Binning positions each animal in a level; one without a usable value
+                // has no level to sit in, and the imbalance measure would then be
+                // computed over a table that silently lost a row.
+                let unusable: Vec<&str> = dataset
+                    .animals
+                    .iter()
+                    .filter(|a| !a.indicators.get(key).is_some_and(|v| v.is_finite()))
+                    .map(|a| a.id.as_str())
+                    .collect();
+
+                if !unusable.is_empty() {
+                    bail!(
+                        "协变量「{}」缺失 {} 只动物的数值（如 {}），无法分档。请更换协变量或补齐数据。",
+                        key,
+                        unusable.len(),
+                        unusable.iter().take(5).copied().collect::<Vec<_>>().join("、")
+                    );
+                }
+            }
+
+            let p = config.allocation_probability;
+            if !(p > 0.0 && p < 1.0) {
+                bail!(
+                    "分配概率必须严格落在 0 和 1 之间（当前 {p}）。p = 1 等于每次都挑最优组，\
+                     没有随机成分，那就不是最小化法了；p = 0 则从不采纳不平衡度量。"
+                );
+            }
+
+            // A covariate that is constant inside every sex stratum contributes the same
+            // amount to every candidate group, so the method would allocate by coin flip
+            // while the export claimed it balanced on covariates.
+            let discriminates = config.covariates.iter().any(|key| {
+                [Sex::Male, Sex::Female].iter().any(|&sex| {
+                    let mut values = dataset
+                        .animals
+                        .iter()
+                        .filter(|a| a.sex == sex)
+                        .filter_map(|a| a.indicators.get(key));
+                    match values.next() {
+                        Some(first) => values.any(|value| value != first),
+                        None => false,
+                    }
+                })
+            });
+
+            if !discriminates {
+                bail!(
+                    "所选协变量在每个性别层内取值都一样，分不出档：最小化法会退化成按配额随机\
+                     分配，导出却仍写着「按协变量均衡」。请改选有区分度的协变量。"
+                );
+            }
         }
+    }
+
+    if group_config.method != GroupingMethod::Minimization && rand_config.minimization.is_some() {
+        bail!("只有最小化法接受协变量与分配概率参数。");
     }
 
     if rand_config.draw_index == 0 {

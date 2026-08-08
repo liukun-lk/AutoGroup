@@ -33,7 +33,7 @@ import {
   Users,
   BarChart3,
 } from "lucide-react";
-import { METHODS, SCENARIOS } from "@/lib/grouping-method";
+import { METHODS, SCENARIOS, usesRandomSource } from "@/lib/grouping-method";
 import { PosthocComparisons } from "./PosthocComparisons";
 
 export function ResultsPage() {
@@ -116,7 +116,11 @@ export function ResultsPage() {
     );
   }
 
-  const isRandomizedRun = result.method !== "Optimized";
+  const isRandomizedRun = usesRandomSource(result.method);
+  const isMinimizationRun = result.method === "Minimization";
+  const minimization = result.randomization?.minimization ?? null;
+  /** What a repeated allocation is called. Minimization does not draw lots. */
+  const drawNoun = isMinimizationRun ? "次分配" : "签";
 
   const handleSelectCandidate = (index: number) => {
     if (!run || isGlp) return;
@@ -270,9 +274,11 @@ export function ResultsPage() {
           <CardHeader>
             <CardTitle>候选分组</CardTitle>
             <CardDescription>
-              {isRandomizedRun
-                ? "每一签都由（主种子，抽签序号）唯一决定，可随时复现；抽过的签全部保留"
-                : "优化模式返回的 Top-N 排名，按 min(P) 与 mean(P) 降序"}
+              {isMinimizationRun
+                ? "每次分配都由（主种子，序号）唯一决定，可随时复现；已生成的分配全部保留"
+                : isRandomizedRun
+                  ? "每一签都由（主种子，抽签序号）唯一决定，可随时复现；抽过的签全部保留"
+                  : "优化模式返回的 Top-N 排名，按 min(P) 与 mean(P) 降序"}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -286,7 +292,7 @@ export function ResultsPage() {
                   onClick={() => handleSelectCandidate(index)}
                 >
                   {isRandomizedRun
-                    ? `第 ${candidate.randomization?.draw_index ?? index + 1} 签`
+                    ? `第 ${candidate.randomization?.draw_index ?? index + 1} ${drawNoun}`
                     : `排名 #${index + 1} · min(P)=${candidate.summary.min_p_value.toFixed(4)}`}
                 </Button>
               ))}
@@ -297,7 +303,13 @@ export function ResultsPage() {
                   disabled={isGlp || redrawing}
                   onClick={handleRedraw}
                 >
-                  {redrawing ? "抽签中…" : "再抽一签"}
+                  {redrawing
+                    ? isMinimizationRun
+                      ? "分配中…"
+                      : "抽签中…"
+                    : isMinimizationRun
+                      ? "重新分配一次"
+                      : "再抽一签"}
                 </Button>
               )}
             </div>
@@ -311,7 +323,7 @@ export function ResultsPage() {
             <p className="text-xs text-muted-foreground">
               导出将使用当前选中的候选（
               {isRandomizedRun
-                ? `第 ${result.randomization?.draw_index ?? run.selectedIndex + 1} 签`
+                ? `第 ${result.randomization?.draw_index ?? run.selectedIndex + 1} ${drawNoun}`
                 : `排名 #${run.selectedIndex + 1}`}
               ）。
             </p>
@@ -344,6 +356,26 @@ export function ResultsPage() {
                 </div>
               </div>
             )}
+            {minimization && (
+              <>
+                <div>
+                  <div className="text-muted-foreground text-xs">协变量</div>
+                  <div className="font-medium">{minimization.covariates.join("、")}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs">分配概率 p</div>
+                  <div className="font-medium">{minimization.allocation_probability}</div>
+                </div>
+                <div>
+                  <div className="text-muted-foreground text-xs">分档方式</div>
+                  <div className="font-medium">
+                    {minimization.binning === "tertiles-within-sex"
+                      ? "性别层内三分位"
+                      : minimization.binning}
+                  </div>
+                </div>
+              </>
+            )}
             {record && (
               <>
                 <div>
@@ -354,10 +386,12 @@ export function ResultsPage() {
                   <div className="text-muted-foreground text-xs">随机数算法</div>
                   <div className="font-medium font-mono">{record.rng_algorithm}</div>
                 </div>
-                <div>
-                  <div className="text-muted-foreground text-xs">抽样次数</div>
-                  <div className="font-medium">{record.attempts}</div>
-                </div>
+                {!isMinimizationRun && (
+                  <div>
+                    <div className="text-muted-foreground text-xs">抽样次数</div>
+                    <div className="font-medium">{record.attempts}</div>
+                  </div>
+                )}
                 <div>
                   <div className="text-muted-foreground text-xs">输入指纹</div>
                   <div className="font-medium font-mono">{record.input_fingerprint}</div>
@@ -367,8 +401,12 @@ export function ResultsPage() {
                   <div className="font-medium font-mono">{record.engine_version}</div>
                 </div>
                 <div>
-                  <div className="text-muted-foreground text-xs">抽签序号</div>
-                  <div className="font-medium">第 {record.draw_index} 签</div>
+                  <div className="text-muted-foreground text-xs">
+                    {isMinimizationRun ? "分配序号" : "抽签序号"}
+                  </div>
+                  <div className="font-medium">
+                    第 {record.draw_index} {drawNoun}
+                  </div>
                 </div>
                 {record.draw_index > 1 && (
                   <div>
@@ -376,16 +414,25 @@ export function ResultsPage() {
                     <div className="font-medium font-mono">{record.base_seed}</div>
                   </div>
                 )}
-                <div>
-                  <div className="text-muted-foreground text-xs">接受准则</div>
-                  <div className="font-medium">
-                    {record.acceptance == null
-                      ? "无（纯随机）"
-                      : record.acceptance.type === "AlphaLine"
-                        ? "全部所选指标 P > α"
-                        : `仅接受最均衡的前 ${Math.round(record.acceptance.target_rate * 100)}%（min(P) ≥ ${record.calibrated_threshold?.toFixed(4) ?? "—"}）`}
+                {isMinimizationRun ? (
+                  <div>
+                    <div className="text-muted-foreground text-xs">不平衡度量</div>
+                    <div className="font-medium">
+                      各协变量所在档位内，按各组配额归一后的组间计数极差之和
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div>
+                    <div className="text-muted-foreground text-xs">接受准则</div>
+                    <div className="font-medium">
+                      {record.acceptance == null
+                        ? "无（纯随机）"
+                        : record.acceptance.type === "AlphaLine"
+                          ? "全部所选指标 P > α"
+                          : `仅接受最均衡的前 ${Math.round(record.acceptance.target_rate * 100)}%（min(P) ≥ ${record.calibrated_threshold?.toFixed(4) ?? "—"}）`}
+                    </div>
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -415,13 +462,32 @@ export function ResultsPage() {
             </Alert>
           )}
 
+          {/* Same trap as the stratification variable: a covariate the allocation was
+              built to balance will test high by construction, and reads as evidence of
+              quality if nobody says otherwise. */}
+          {minimization && minimization.covariates.length > 0 && (
+            <Alert>
+              <AlertDescription className="text-sm">
+                <strong>{minimization.covariates.join("、")}</strong> 是本次分组的
+                <strong>平衡协变量</strong>，不是检验指标。分配本来就是冲着让它们在组间均衡去的，
+                所以它们的组间检验 P 值偏高是构造的结果，不能当作「均衡性极佳」的证据。
+                {minimization.covariates.some((c) => selectedIndicators.includes(c))
+                  ? "本次它们同时被选为参与统计的指标，这一点尤其要留意。"
+                  : ""}
+                报告中应同时给出各组这些指标的均值 ± 标准差，并注明它们是平衡协变量。
+              </AlertDescription>
+            </Alert>
+          )}
+
           {!summary.meets_criteria && (
             <Alert variant="destructive">
               <AlertDescription className="text-sm">
                 本次分组有 {summary.num_invalid_indicators} 个指标未达到均衡要求。
-                {record
-                  ? "请勿反复更换种子重算——那是看到结果之后的挑选。可行的做法是开启接受准则，或改用按主指标分层随机，两者都是事先声明的规则。"
-                  : "可调整参与统计的指标或放宽判定口径后重算。"}
+                {isMinimizationRun
+                  ? "请勿反复重新分配直到满意——那是看到结果之后的挑选。可行的做法是把未达标的指标补进协变量，或减少协变量个数把均衡能力集中起来，两者都是事先声明的规则。"
+                  : record
+                    ? "请勿反复更换种子重算——那是看到结果之后的挑选。可行的做法是开启接受准则，或改用按主指标分层随机，两者都是事先声明的规则。"
+                    : "可调整参与统计的指标或放宽判定口径后重算。"}
               </AlertDescription>
             </Alert>
           )}

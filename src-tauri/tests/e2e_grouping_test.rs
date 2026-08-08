@@ -373,6 +373,7 @@ fn each_method_exports_its_own_scenario_and_principle() {
                     .then_some(AcceptanceCriterion::AlphaLine),
                 max_attempts: 10_000,
                 draw_index: 1,
+                minimization: None,
             }),
         };
 
@@ -493,6 +494,7 @@ fn the_exported_sheet_can_be_re_sorted_into_the_same_grouping() {
             acceptance: None,
             max_attempts: 1,
             draw_index: 1,
+            minimization: None,
         }),
     };
 

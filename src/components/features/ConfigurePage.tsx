@@ -28,12 +28,14 @@ import { getExcludedIndicators, filterDefaultIndicators } from "@/utils/indicato
 import {
   ACCEPTANCE_FOOTNOTE,
   ACCEPTANCE_TIERS,
+  DEFAULT_ALLOCATION_PROBABILITY,
   METHODS,
   SCENARIOS,
   TARGET_RATE_PRESETS,
   blockStructure,
   defaultMethodFor,
   disabledReason,
+  usesRandomSource,
 } from "@/lib/grouping-method";
 
 export function ConfigurePage() {
@@ -105,6 +107,19 @@ export function ConfigurePage() {
       : true
   );
 
+  // Minimization: what to balance on, and how strongly the imbalance measure is obeyed.
+  // No default covariate is preselected, for the same reason as the primary indicator —
+  // only the experimenter knows which covariates the study hinges on.
+  const [covariates, setCovariates] = useState<string[]>(
+    () => storedGroupConfig?.randomization?.minimization?.covariates ?? []
+  );
+  const [allocationProbabilityText, setAllocationProbabilityText] = useState(() =>
+    (
+      storedGroupConfig?.randomization?.minimization?.allocation_probability ??
+      DEFAULT_ALLOCATION_PROBABILITY
+    ).toString()
+  );
+
   // Reserve group state
   const [reserveMaleCount, setReserveMaleCount] = useState(() => storedReserve?.male_count ?? 0);
   const [reserveFemaleCount, setReserveFemaleCount] = useState(
@@ -151,8 +166,13 @@ export function ConfigurePage() {
   }, [scenario]);
 
   const selectedMethod = METHODS.find((m) => m.value === method);
+  // Two different questions. `isRandomized` is the pure randomization family, which is
+  // what the acceptance criterion belongs to; `usesSeed` is "does this method draw from
+  // the seeded stream", which minimization also does.
   const isRandomized =
     method === "Random" || method === "ConstrainedRandom" || method === "BlockedRandom";
+  const isMinimization = method === "Minimization";
+  const usesSeed = usesRandomSource(method);
 
   // Only indicators every animal actually has a number for can define blocks: an animal
   // without a value has no block to sit in. This is the same rule the backend enforces.
@@ -339,7 +359,7 @@ export function ConfigurePage() {
         : null;
 
     const parsedSeed = seedText.trim() === "" ? null : Number(seedText.trim());
-    const randomization: RandomizationConfig | null = isRandomized
+    const randomization: RandomizationConfig | null = usesSeed
       ? {
           seed: parsedSeed !== null && Number.isFinite(parsedSeed) ? parsedSeed : null,
           primary_indicator: method === "BlockedRandom" ? primaryIndicator : null,
@@ -348,6 +368,13 @@ export function ConfigurePage() {
           // cover that case, and each rejected draw is cheap.
           max_attempts: 10000,
           draw_index: 1,
+          minimization: isMinimization
+            ? {
+                covariates,
+                allocation_probability: Number(allocationProbabilityText.trim()),
+                binning: "Tertiles",
+              }
+            : null,
         }
       : null;
 
@@ -390,11 +417,15 @@ export function ConfigurePage() {
     scenario,
     method,
     isRandomized,
+    isMinimization,
+    usesSeed,
     primaryIndicator,
     seedText,
     acceptanceTier,
     targetRate,
     criterionOn,
+    covariates,
+    allocationProbabilityText,
   ]);
 
   const toggleIndicator = (indicator: string) => {
@@ -459,8 +490,22 @@ export function ConfigurePage() {
   const needsPrimaryIndicator = method === "BlockedRandom" && primaryIndicator === "";
   const methodImplemented = selectedMethod?.implemented ?? false;
 
+  // Same rule as the primary indicator: the software will not choose what a study
+  // balances on. And p has to stay strictly inside (0, 1) — p = 1 would strip the random
+  // component out entirely, which is no longer minimization.
+  const needsCovariates = isMinimization && covariates.length === 0;
+  const parsedProbability = Number(allocationProbabilityText.trim());
+  const invalidProbability =
+    isMinimization &&
+    !(Number.isFinite(parsedProbability) && parsedProbability > 0 && parsedProbability < 1);
+
   const isValid =
-    areSexConstraintsValid && hasSelectedIndicators && !needsPrimaryIndicator && methodImplemented;
+    areSexConstraintsValid &&
+    hasSelectedIndicators &&
+    !needsPrimaryIndicator &&
+    !needsCovariates &&
+    !invalidProbability &&
+    methodImplemented;
 
   const scenarioCopy = SCENARIOS.find((s) => s.value === scenario);
 
@@ -627,7 +672,63 @@ export function ConfigurePage() {
             </div>
           )}
 
-          {isRandomized && (
+          {isMinimization && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>协变量（用于计算不平衡度）</Label>
+                <div className="grid grid-cols-2 gap-2 max-h-56 overflow-y-auto rounded-md border p-3">
+                  {numericIndicators.map((name) => (
+                    <label key={name} className="flex items-center gap-2 text-sm">
+                      <Checkbox
+                        checked={covariates.includes(name)}
+                        onCheckedChange={() =>
+                          setCovariates((prev) =>
+                            prev.includes(name)
+                              ? prev.filter((c) => c !== name)
+                              : [...prev, name]
+                          )
+                        }
+                      />
+                      <span className="truncate">{name}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  只列出全部动物均有数值的指标。协变量先按性别分层，层内各取三分位分档，分配时看各档在组间的数量差（已按配额折算）。它和下方「参与统计的指标」是两回事，可以选一样的，也可以不一样。
+                </p>
+                {needsCovariates && (
+                  <p className="text-xs text-destructive">请至少选择一个协变量后才能提交</p>
+                )}
+                {covariates.length > 3 && (
+                  <p className="text-xs text-amber-700">
+                    各协变量是等权相加的，选得越多，每个分到的权重越小。一般 1–3 个关键指标就够。
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>分配概率 p</Label>
+                <Input
+                  type="number"
+                  step="0.05"
+                  min="0.01"
+                  max="0.99"
+                  value={allocationProbabilityText}
+                  onChange={(e) => setAllocationProbabilityText(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  每只动物以概率 p 分入不平衡度最小的组，否则分入其它组。常用 0.7–0.8。
+                </p>
+                {invalidProbability && (
+                  <p className="text-xs text-destructive">
+                    p 要严格落在 0 和 1 之间。p = 1 等于每次都挑最优组，没有随机成分，那就不是最小化法了。
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {usesSeed && (
             <div className="space-y-6">
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-2">
@@ -644,7 +745,7 @@ export function ConfigurePage() {
                 </div>
               </div>
 
-              {method !== "Random" && (
+              {isRandomized && method !== "Random" && (
                 <div className="space-y-3">
                   {method === "BlockedRandom" && (
                     <label className="flex items-center gap-2 text-sm">

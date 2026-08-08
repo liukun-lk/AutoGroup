@@ -105,10 +105,11 @@ pub fn evaluate_grouping_with_constraints(
                 animal_id: animal.id.clone(),
                 sex: animal.sex,
                 group_id,
-                // Filled in by the randomization path, which is the only one that has a
-                // per-animal draw to report.
+                // Filled in by the path that produced the candidate; the evaluator has no
+                // per-animal provenance of its own to report.
                 random_number: None,
                 block_index: None,
+                entry_index: None,
             });
         }
     }

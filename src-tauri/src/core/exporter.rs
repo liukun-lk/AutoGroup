@@ -80,7 +80,58 @@ pub fn grouping_principle(result: &GroupingResult, dataset: &Dataset) -> String 
                 criterion_suffix(result.randomization.as_ref().and_then(|r| r.acceptance))
             )
         }
-        GroupingMethod::Minimization => "最小化法（协变量自适应随机化）".to_string(),
+        GroupingMethod::Minimization => match minimization_record(result) {
+            Some(record) => format!(
+                "最小化法（协变量自适应随机化，分配概率 p = {:.2}；协变量：{}，按{}分档）",
+                record.allocation_probability,
+                covariate_names(record, dataset),
+                binning_chinese(&record.binning),
+            ),
+            None => "最小化法（协变量自适应随机化）".to_string(),
+        },
+    }
+}
+
+fn minimization_record(result: &GroupingResult) -> Option<&MinimizationRecord> {
+    result.randomization.as_ref()?.minimization.as_ref()
+}
+
+/// Covariate keys rendered with the display names a reader recognizes.
+fn covariate_names(record: &MinimizationRecord, dataset: &Dataset) -> String {
+    record
+        .covariates
+        .iter()
+        .map(|key| {
+            dataset
+                .get_indicator_metadata(key)
+                .map_or(key.as_str(), |meta| meta.display_name.as_str())
+        })
+        .collect::<Vec<_>>()
+        .join("、")
+}
+
+/// The record stores a stable identifier rather than prose so that an archived run stays
+/// readable after the wording changes; this is where it turns back into wording.
+fn binning_chinese(identifier: &str) -> &str {
+    match identifier {
+        "tertiles-within-sex" => "性别层内三分位",
+        other => other,
+    }
+}
+
+fn imbalance_measure_chinese(identifier: &str) -> &str {
+    match identifier {
+        "quota-normalized-range" => "各协变量所在档位内，按各组配额归一后的组间计数极差之和",
+        other => other,
+    }
+}
+
+fn allocation_rule_chinese(identifier: &str) -> &str {
+    match identifier {
+        "minimizer-or-uniform-over-others" => {
+            "以概率 p 在不平衡度最小的组中均匀抽取，否则在其余可分配组中均匀抽取"
+        }
+        other => other,
     }
 }
 
@@ -96,6 +147,17 @@ fn stratification_variable(result: &GroupingResult, dataset: &Dataset) -> String
                 None => variable.to_string(),
             }
         }
+        // Minimization balances on covariates, not on a stratification factor — but
+        // leaving this row to fall through to "性别" would put it at odds with the
+        // principle row directly above it, on the same sheet.
+        (GroupingMethod::Minimization, _) => match minimization_record(result) {
+            Some(record) => format!(
+                "协变量：{}（{}）",
+                covariate_names(record, dataset),
+                binning_chinese(&record.binning)
+            ),
+            None => NOT_APPLICABLE.to_string(),
+        },
         _ if sex_stratified => "性别".to_string(),
         _ => NOT_APPLICABLE.to_string(),
     }
@@ -111,16 +173,24 @@ struct ExportRow {
     sex: Sex,
     random_number: Option<f64>,
     block_index: Option<usize>,
+    entry_index: Option<usize>,
     indicators: Vec<f64>,
 }
 
-/// The audit columns a randomized run adds to 分组结果, between 性别 and the indicators.
+/// The audit columns a seeded run adds to 分组结果, between 性别 and the indicators.
 ///
-/// They exist so the allocation can be re-derived by hand: sort the sheet by 区组 then
-/// 随机数 and deal each group its quota in turn, and the 组别 column has to come back out.
-/// Without them the seed is only checkable by re-running this exact software; with them a
-/// reviewer can verify the mechanism in Excel, which is the check the lab already knows.
+/// For the pure randomization methods they exist so the allocation can be re-derived by
+/// hand: sort the sheet by 区组 then 随机数 and deal each group its quota in turn, and the
+/// 组别 column has to come back out. Without them the seed is only checkable by re-running
+/// this exact software; with them a reviewer can verify the mechanism in Excel, which is
+/// the check the lab already knows.
+///
+/// Minimization cannot offer that check — its allocation is a sequential decision chain,
+/// not a sort — so it publishes 入组顺序 instead and carries the checkable material in the
+/// 最小化过程 sheet. Emitting a per-animal draw there would advertise a hand check that
+/// does not exist.
 struct AuditColumns {
+    entry: bool,
     random: bool,
     block: bool,
 }
@@ -128,13 +198,14 @@ struct AuditColumns {
 impl AuditColumns {
     fn of(result: &GroupingResult) -> Self {
         Self {
+            entry: result.assignments.iter().any(|a| a.entry_index.is_some()),
             random: result.assignments.iter().any(|a| a.random_number.is_some()),
             block: result.assignments.iter().any(|a| a.block_index.is_some()),
         }
     }
 
     fn count(&self) -> u16 {
-        u16::from(self.random) + u16::from(self.block)
+        u16::from(self.entry) + u16::from(self.random) + u16::from(self.block)
     }
 
     /// First column holding an indicator.
@@ -185,7 +256,16 @@ pub fn export_grouping_result(
         }
     }
 
-    // Sheet 3: Summary (汇总信息)
+    // Sheet 3: Minimization decision log (最小化过程), only when one was recorded
+    if let Some(record) = minimization_record(result) {
+        let sheet = workbook.add_worksheet();
+        sheet
+            .set_name("最小化过程")
+            .context("Failed to set sheet name")?;
+        write_minimization_sheet_to(sheet, result, dataset, config, record)?;
+    }
+
+    // Sheet 4: Summary (汇总信息)
     if config.include_summary {
         write_summary_sheet(&mut workbook, result, dataset, config)?;
     }
@@ -239,6 +319,20 @@ pub fn export_multiple_results(
                 write_posthoc_sheet_to(posthoc_sheet, result, config)?;
             }
         }
+    }
+
+    // Minimization returns exactly one candidate, so its decision log is written once
+    // rather than per sheet.
+    if let Some((result, record)) = results
+        .candidates
+        .first()
+        .and_then(|result| minimization_record(result).map(|record| (result, record)))
+    {
+        let sheet = workbook.add_worksheet();
+        sheet
+            .set_name("最小化过程")
+            .context("Failed to set sheet name")?;
+        write_minimization_sheet_to(sheet, result, dataset, config, record)?;
     }
 
     // Add summary comparison sheet
@@ -316,6 +410,7 @@ fn write_grouping_sheet_to(
             sex: assignment.sex,
             random_number: assignment.random_number,
             block_index: assignment.block_index,
+            entry_index: assignment.entry_index,
             indicators: indicator_values,
         });
     }
@@ -343,6 +438,10 @@ fn write_grouping_sheet_to(
     sheet.write_string_with_format(1, 2, "性别", &header_format)?;
 
     let mut audit_col = 3u16;
+    if audit.entry {
+        sheet.write_string_with_format(1, audit_col, "入组顺序", &header_format)?;
+        audit_col += 1;
+    }
     if audit.block {
         sheet.write_string_with_format(1, audit_col, "区组", &header_format)?;
         audit_col += 1;
@@ -386,6 +485,12 @@ fn write_grouping_sheet_to(
             sheet.write_string(current_excel_row, 2, row.sex_chinese())?;
 
             let mut col = 3u16;
+            if audit.entry {
+                if let Some(entry) = row.entry_index {
+                    sheet.write_number(current_excel_row, col, entry as f64)?;
+                }
+                col += 1;
+            }
             if audit.block {
                 if let Some(block) = row.block_index {
                     sheet.write_number(current_excel_row, col, block as f64)?;
@@ -450,6 +555,10 @@ fn write_grouping_sheet_to(
     sheet.set_column_width(2, 8)?; // Sex
 
     let mut col = 3u16;
+    if audit.entry {
+        sheet.set_column_width(col, 10)?;
+        col += 1;
+    }
     if audit.block {
         sheet.set_column_width(col, 8)?;
         col += 1;
@@ -458,6 +567,188 @@ fn write_grouping_sheet_to(
         // Wide enough that the digits a reviewer sorts on are actually visible.
         sheet.set_column_width(col, 20)?;
     }
+
+    Ok(())
+}
+
+/// Write 「最小化过程」: the per-animal decision log of a minimization run.
+///
+/// This is minimization's audit surface, and the reason the method can be written up at
+/// all. Its allocation cannot be re-derived by sorting a column the way a blocked draw
+/// can, so what a reviewer checks here instead is that the *declared rule was followed*:
+/// which level each animal fell into, what imbalance each candidate group would have
+/// produced, which branch fired, and where the animal actually went. The coin flips
+/// themselves are not reproducible on paper — the rule's execution is.
+fn write_minimization_sheet_to(
+    sheet: &mut rust_xlsxwriter::Worksheet,
+    result: &GroupingResult,
+    dataset: &Dataset,
+    config: &SheetConfig,
+    record: &MinimizationRecord,
+) -> Result<()> {
+    let label_format = Format::new().set_bold();
+    let header_format = Format::new().set_bold();
+    let mut row = 0u32;
+
+    let display_of = |key: &str| -> String {
+        dataset
+            .get_indicator_metadata(key)
+            .map_or(key, |meta| meta.display_name.as_str())
+            .to_string()
+    };
+    let group_label = |group_id: usize| -> String {
+        config
+            .group_constraints
+            .as_ref()
+            .and_then(|constraints| constraints.iter().find(|c| c.group_index == group_id))
+            .and_then(|constraint| constraint.custom_name.clone())
+            .unwrap_or_else(|| format!("组{}", group_id + 1))
+    };
+
+    // Section 1: the rule, spelled out before the log that has to match it.
+    sheet.write_string_with_format(row, 0, "分配参数", &label_format)?;
+    row += 1;
+
+    sheet.write_string(row, 0, "分配概率 p")?;
+    sheet.write_number(row, 1, record.allocation_probability)?;
+    row += 1;
+
+    sheet.write_string(row, 0, "不平衡度量")?;
+    sheet.write_string(row, 1, imbalance_measure_chinese(&record.imbalance_measure))?;
+    row += 1;
+
+    sheet.write_string(row, 0, "分配规则")?;
+    sheet.write_string(row, 1, allocation_rule_chinese(&record.allocation_rule))?;
+    row += 2;
+
+    // Section 2: the cut points, without which "按三分位分档" cannot be checked.
+    sheet.write_string_with_format(row, 0, "协变量分档", &label_format)?;
+    row += 1;
+
+    sheet.write_string_with_format(row, 0, "协变量", &header_format)?;
+    sheet.write_string_with_format(row, 1, "性别", &header_format)?;
+    sheet.write_string_with_format(row, 2, "档数", &header_format)?;
+    sheet.write_string_with_format(row, 3, "切点", &header_format)?;
+    row += 1;
+
+    for bins in &record.bins {
+        for stratum in &bins.strata {
+            sheet.write_string(row, 0, display_of(&bins.covariate))?;
+            sheet.write_string(row, 1, stratum.sex.to_chinese())?;
+            sheet.write_number(row, 2, stratum.levels as f64)?;
+
+            let cuts = if stratum.cut_points.is_empty() {
+                "无（该层取值全部相同）".to_string()
+            } else {
+                stratum
+                    .cut_points
+                    .iter()
+                    .map(|cut| format!("{cut:.4}"))
+                    .collect::<Vec<_>>()
+                    .join(" / ")
+            };
+            sheet.write_string(row, 3, &cuts)?;
+            row += 1;
+        }
+    }
+    row += 1;
+
+    // Section 3: the log itself.
+    sheet.write_string_with_format(row, 0, "逐只分配决策", &label_format)?;
+    row += 1;
+
+    let num_groups = record.decisions.first().map_or(0, |d| d.scores.len());
+
+    sheet.write_string_with_format(row, 0, "入组顺序", &header_format)?;
+    sheet.write_string_with_format(row, 1, "动物编号", &header_format)?;
+    sheet.write_string_with_format(row, 2, "性别", &header_format)?;
+
+    let mut col = 3u16;
+    for key in &record.covariates {
+        sheet.write_string_with_format(
+            row,
+            col,
+            format!("{} 档位", display_of(key)),
+            &header_format,
+        )?;
+        col += 1;
+    }
+    for group_id in 0..num_groups {
+        sheet.write_string_with_format(
+            row,
+            col,
+            format!("{} 不平衡度", group_label(group_id)),
+            &header_format,
+        )?;
+        col += 1;
+    }
+    sheet.write_string_with_format(row, col, "决策分支", &header_format)?;
+    sheet.write_string_with_format(row, col + 1, "分入组别", &header_format)?;
+    let last_col = col + 1;
+    row += 1;
+
+    let sex_of: std::collections::HashMap<&str, Sex> = dataset
+        .animals
+        .iter()
+        .map(|animal| (animal.id.as_str(), animal.sex))
+        .collect();
+
+    for decision in &record.decisions {
+        sheet.write_number(row, 0, decision.entry_index as f64)?;
+        sheet.write_string(row, 1, &decision.animal_id)?;
+        sheet.write_string(
+            row,
+            2,
+            sex_of
+                .get(decision.animal_id.as_str())
+                .map_or("", |sex| sex.to_chinese()),
+        )?;
+
+        let mut col = 3u16;
+        for &level in &decision.levels {
+            // Levels are 0-based internally; the sheet counts from 1 like the cut points.
+            sheet.write_number(row, col, (level + 1) as f64)?;
+            col += 1;
+        }
+        for score in &decision.scores {
+            match score {
+                Some(value) => sheet.write_number(row, col, *value)?,
+                // Not a candidate at this step: either full, or a reserve group while an
+                // experimental one was still open.
+                None => sheet.write_string(row, col, "—")?,
+            };
+            col += 1;
+        }
+        sheet.write_string(
+            row,
+            col,
+            if decision.took_minimizer {
+                "最优组"
+            } else {
+                "非最优组（1−p）"
+            },
+        )?;
+        sheet.write_string(row, col + 1, group_label(decision.group_id))?;
+        row += 1;
+    }
+
+    // The grouping the log has to agree with is on another sheet; naming it here saves a
+    // reader from wondering whether the two were produced by the same run.
+    row += 1;
+    sheet.write_string(
+        row,
+        0,
+        format!(
+            "共 {} 只动物，逐只决策与「分组结果」的组别一一对应。",
+            result.assignments.len()
+        ),
+    )?;
+
+    sheet.set_column_width(0, 10)?;
+    sheet.set_column_width(1, 15)?;
+    sheet.set_column_width(2, 8)?;
+    sheet.set_column_width(3, 14)?;
+    sheet.set_column_width(last_col, 14)?;
 
     Ok(())
 }
@@ -759,6 +1050,26 @@ fn write_summary_sheet(
         row += 1;
     }
 
+    // The parameters that define a minimization run. The full per-animal log lives on
+    // its own sheet; what belongs here is the declared rule, next to the seed.
+    if let Some(m) = minimization_record(result) {
+        sheet.write_string(row, 0, "协变量")?;
+        sheet.write_string(row, 1, covariate_names(m, dataset))?;
+        row += 1;
+
+        sheet.write_string(row, 0, "分配概率 p")?;
+        sheet.write_number(row, 1, m.allocation_probability)?;
+        row += 1;
+
+        sheet.write_string(row, 0, "不平衡度量")?;
+        sheet.write_string(row, 1, imbalance_measure_chinese(&m.imbalance_measure))?;
+        row += 1;
+
+        sheet.write_string(row, 0, "分配规则")?;
+        sheet.write_string(row, 1, allocation_rule_chinese(&m.allocation_rule))?;
+        row += 1;
+    }
+
     // Written for every mode, randomized or not: it is what pins "the same input" when
     // a run is re-checked years later.
     sheet.write_string(row, 0, "输入指纹")?;
@@ -896,6 +1207,7 @@ mod tests {
             ExportRow {
                 random_number: None,
                 block_index: None,
+                entry_index: None,
                 group_id: 2,
                 group_name: "组3".to_string(),
                 is_reserve: false,
@@ -906,6 +1218,7 @@ mod tests {
             ExportRow {
                 random_number: None,
                 block_index: None,
+                entry_index: None,
                 group_id: 1,
                 group_name: "组2".to_string(),
                 is_reserve: false,
@@ -916,6 +1229,7 @@ mod tests {
             ExportRow {
                 random_number: None,
                 block_index: None,
+                entry_index: None,
                 group_id: 1,
                 group_name: "组2".to_string(),
                 is_reserve: false,
@@ -926,6 +1240,7 @@ mod tests {
             ExportRow {
                 random_number: None,
                 block_index: None,
+                entry_index: None,
                 group_id: 1,
                 group_name: "组2".to_string(),
                 is_reserve: false,
@@ -936,6 +1251,7 @@ mod tests {
             ExportRow {
                 random_number: None,
                 block_index: None,
+                entry_index: None,
                 group_id: 3,
                 group_name: "备用动物".to_string(),
                 is_reserve: true,
@@ -1008,6 +1324,7 @@ mod tests {
                 GroupAssignment {
                     random_number: None,
                     block_index: None,
+                    entry_index: None,
                     animal_id: "M001".to_string(),
                     group_id: 0,
                     sex: Sex::Male,
@@ -1015,6 +1332,7 @@ mod tests {
                 GroupAssignment {
                     random_number: None,
                     block_index: None,
+                    entry_index: None,
                     animal_id: "M003".to_string(),
                     group_id: 0,
                     sex: Sex::Female,
@@ -1022,6 +1340,7 @@ mod tests {
                 GroupAssignment {
                     random_number: None,
                     block_index: None,
+                    entry_index: None,
                     animal_id: "M002".to_string(),
                     group_id: 1,
                     sex: Sex::Male,
@@ -1029,6 +1348,7 @@ mod tests {
                 GroupAssignment {
                     random_number: None,
                     block_index: None,
+                    entry_index: None,
                     animal_id: "M004".to_string(),
                     group_id: 1,
                     sex: Sex::Female,

@@ -667,6 +667,7 @@ mod dispatch_tests {
                     .then_some(AcceptanceCriterion::AlphaLine),
                 max_attempts: 1000,
                 draw_index: 1,
+                minimization: None,
             });
 
             let result = grouping::compute_grouping(dataset.clone(), config, stat_config())
@@ -679,17 +680,31 @@ mod dispatch_tests {
     }
 
     #[test]
-    fn minimization_is_refused_rather_than_silently_substituted() {
+    fn minimization_runs_and_records_its_parameters() {
         let dataset = parser::parse_excel_file(FIXTURE_60F).unwrap();
-        let config = sampling_scale_config(
+        let mut config = sampling_scale_config(
             StudyScenario::ConfirmatoryTrial,
             GroupingMethod::Minimization,
         );
+        config.randomization = Some(RandomizationConfig {
+            seed: Some(2026),
+            minimization: Some(MinimizationConfig {
+                covariates: vec!["体重".to_string()],
+                allocation_probability: 0.8,
+                binning: CovariateBinning::Tertiles,
+            }),
+            ..Default::default()
+        });
 
-        let err = grouping::compute_grouping(dataset, config, stat_config())
-            .unwrap_err()
-            .to_string();
-        assert!(err.contains("暂未实现"), "{err}");
+        let result = grouping::compute_grouping(dataset, config, stat_config()).unwrap();
+
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].method, GroupingMethod::Minimization);
+        assert!(result.candidates[0]
+            .randomization
+            .as_ref()
+            .and_then(|r| r.minimization.as_ref())
+            .is_some());
     }
 
     /// Configs saved before scenarios existed have no `scenario` / `method` field; they
