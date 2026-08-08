@@ -313,22 +313,33 @@ This is the format in `tests/fixtures/e2e_expected_output.xlsx`, which is a real
 user accepted; earlier revisions of this file described a transposed layout with animals as
 columns, which neither the code nor the accepted artifact has ever produced.
 
-**`区组` and `随机数` are audit columns and appear only for the randomized methods** (`随机数`
-whenever a draw was recorded, `区组` only under blocked randomization). They are not
-decoration: the allocation *is* "sort by the draw inside the block, then deal each group its
-quota in turn", so a reviewer can re-sort the sheet in Excel and reproduce `组别` by hand —
-the same check the lab used to do with a `RAND()` column, except reproducible from a seed.
-`the_exported_sheet_can_be_re_sorted_into_the_same_grouping` in the e2e test performs exactly
-that replay against the written workbook, and `randomizer/tests.rs` does it at the model
-level. Optimization records no draw, so its export keeps the plain layout and the golden
-fixture is unaffected.
+**`区组` and `随机数` are audit columns and appear only for the three pure randomization
+methods** (`随机数` whenever a draw was recorded, `区组` only under blocked randomization).
+They are not decoration: there the allocation *is* "sort by the draw inside the block, then
+deal each group its quota in turn", so a reviewer can re-sort the sheet in Excel and
+reproduce `组别` by hand — the same check the lab used to do with a `RAND()` column, except
+reproducible from a seed. `the_exported_sheet_can_be_re_sorted_into_the_same_grouping` in the
+e2e test performs exactly that replay against the written workbook, and `randomizer/tests.rs`
+does it at the model level. Optimization records no draw, so its export keeps the plain
+layout and the golden fixture is unaffected.
+
+**Minimization cannot offer that check and must not imply it.** Its allocation is a
+sequential decision chain, not a sort, so it leaves `random_number` / `block_index` as `None`
+and publishes `入组顺序` instead. Its checkable material is the `最小化过程` sheet: the
+declared rule (p, imbalance measure, allocation rule), the binning cut points per covariate
+per sex stratum, and one row per animal with its levels, every candidate group's imbalance,
+which branch fired and where it landed. A reviewer cannot reproduce the coin flips on paper,
+but can confirm the declared rule was followed at every step —
+`the_decision_log_replays_into_the_same_allocation` in `minimizer/tests.rs` is that same
+replay in code, and it is the test to keep green if the allocation logic ever changes.
 
 Sheets written, in order: `分组结果`, then `统计结果` and `事后比较` when
-`include_statistics` is set, then `汇总信息` when `include_summary` is set. `统计结果` keeps
-its five columns (indicator, Levene P, main test P, method, verdict); the pairwise post-hoc
-comparisons live in `事后比较` as one row per (indicator, group pair), which reviewers read
-the way they read a GraphPad multiple-comparisons table. That sheet is omitted entirely for
-two-group designs, which have no post-hoc stage.
+`include_statistics` is set, then `最小化过程` for a minimization run, then `汇总信息` when
+`include_summary` is set. `统计结果` keeps its five columns (indicator, Levene P, main test P,
+method, verdict); the pairwise post-hoc comparisons live in `事后比较` as one row per
+(indicator, group pair), which reviewers read the way they read a GraphPad
+multiple-comparisons table. That sheet is omitted entirely for two-group designs, which have
+no post-hoc stage.
 
 See `src-tauri/src/core/exporter.rs` for the canonical implementation.
 
@@ -393,6 +404,34 @@ finish on Windows. `perf_repro.rs` guards this; run it after touching the evalua
 cd src-tauri && cargo test --release perf_ -- --nocapture --ignored
 ```
 
+### Minimization (`grouping/minimizer.rs`)
+
+Sequential covariate-adaptive allocation (Pocock–Simon). Three properties are load-bearing,
+each with a test, and each looks safe to "simplify" until you see what it breaks:
+
+1. **Covariates are binned inside each sex stratum**, on values (not ranks), ties kept
+   together. Binning globally puts every male in the top tertile and every female in the
+   bottom one for any indicator where the sexes differ; since the eligible groups are already
+   filtered by sex, the covariate then carries zero information and the method silently
+   degrades to complete randomization. Guarded by
+   `covariates_are_binned_inside_each_sex_stratum`.
+2. **The imbalance measure is normalized by each group's quota in that sex.** Raw counts
+   assume equal allocation; with a 20/10 split they hold both groups level until the small
+   one fills, then dump the whole tail into the large one. Equal quotas make the two rankings
+   identical — `equal_quotas_rank_exactly_like_raw_counts` pins that, so the change is
+   behaviour-preserving for the common case.
+3. **Exactly two uniforms are consumed per animal, whatever the branch.** The stream position
+   is part of the reproduction contract; skipping the draws when the choice is forced shifts
+   every later animal. Guarded by `the_pass_consumes_exactly_two_uniforms_per_animal`.
+
+The `1 - p` probability mass goes to the **non**-minimizers. Spreading it over all eligible
+groups would make the true probability of landing on a minimizer `p + (1 - p) / k`, so a run
+declared at p = 0.8 with 3 groups would actually run at 0.867 and the exported parameter would
+be wrong. `p = 1` is rejected by validation, not merely discouraged: it strips the random
+component out and the method is then a deterministic search.
+
+Design rationale and the alternatives considered: `docs/minimization_design.md`.
+
 ## Documentation
 
 **Primary docs:** `docs/` directory
@@ -424,7 +463,9 @@ answering "is this grouping balanced / is this P value right".
 
 ### Modifying Grouping Logic
 
-1. Core algorithm: `src-tauri/src/core/grouping/mod.rs::compute_optimal_grouping`
+1. Core algorithm: `src-tauri/src/core/grouping/mod.rs::compute_optimal_grouping`; the seeded
+   paths are `randomizer.rs` (the three randomization methods) and `minimizer.rs`
+   (Pocock-Simon minimization). All three dispatch from `compute_grouping`
 2. Update `enumerator.rs` for candidate generation changes
 3. Update `evaluator.rs` for scoring/filtering changes — keep the scoring pass and the full
    evaluation sharing one indicator loop, so ranking numbers and reported numbers cannot diverge
