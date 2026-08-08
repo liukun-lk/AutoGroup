@@ -206,7 +206,7 @@ export function UploadPage() {
                 <div className="font-semibold mb-1">文件导入失败</div>
                 <div className="whitespace-pre-line leading-relaxed">{localError}</div>
                 <div className="mt-2 text-xs opacity-80">
-                  可对照下方「文件格式要求」检查文件，或参考测试数据的排版方式。
+                  可对照下方「文件格式要求」逐项检查。
                 </div>
               </AlertDescription>
             </Alert>
@@ -231,13 +231,13 @@ export function UploadPage() {
 
               {isDragOver && dragFileValid === true && (
                 <h3 className="text-lg font-semibold mb-2 text-green-700 dark:text-green-400">
-                  ✅ 松开以上传 Excel 文件
+                  松开即可上传
                 </h3>
               )}
 
               {isDragOver && dragFileValid === false && (
                 <h3 className="text-lg font-semibold mb-2 text-red-700 dark:text-red-400">
-                  ❌ 仅支持 Excel 文件（.xlsx）
+                  只支持 .xlsx 格式的 Excel 文件
                 </h3>
               )}
 
@@ -245,7 +245,7 @@ export function UploadPage() {
                 <>
                   <h3 className="text-lg font-semibold mb-2">选择 Excel 文件</h3>
                   <p className="text-sm text-muted-foreground mb-4 text-center max-w-sm">
-                    文件应包含"原始数据" sheet，格式参考测试数据
+                    第一个 sheet 需名为「原始数据」，排版见下方格式要求
                   </p>
                   <p className="text-xs text-muted-foreground mb-6 text-center max-w-md">
                     支持拖拽文件到此区域，或按 Cmd+V / Ctrl+V 粘贴已复制的文件
@@ -260,7 +260,7 @@ export function UploadPage() {
                   size="lg"
                 >
                   <FileSpreadsheet className="mr-2 h-4 w-4" />
-                  {isLoading ? "解析中..." : "选择文件"}
+                  {isLoading ? "解析中…" : "选择文件"}
                 </Button>
               )}
             </div>
@@ -310,7 +310,7 @@ export function UploadPage() {
             <Alert className="border-green-200 bg-green-50">
               <CheckCircle2 className="h-4 w-4 text-green-600" />
               <AlertDescription className="text-green-800">
-                <div className="font-semibold mb-2">文件解析成功！</div>
+                <div className="font-semibold mb-2">文件解析成功</div>
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <div>总动物数: <span className="font-medium">{dataset.metadata.total_animals}</span></div>
                   <div>指标数量: <span className="font-medium">{dataset.metadata.indicator_count}</span></div>

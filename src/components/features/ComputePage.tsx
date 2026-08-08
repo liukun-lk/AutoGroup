@@ -137,7 +137,7 @@ export function ComputePage() {
           <CardDescription>
             {isRandomized
               ? `正在按「${methodLabel}」抽取分组，全过程由随机种子决定`
-              : "正在使用统计优化算法计算分组结果"}
+              : "正在枚举候选方案并评估各指标的统计均衡"}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -146,7 +146,7 @@ export function ComputePage() {
             {status === "computing" && (
               <>
                 <Loader2 className="h-16 w-16 text-primary animate-spin mb-4" />
-                <h3 className="text-lg font-semibold mb-2">正在计算...</h3>
+                <h3 className="text-lg font-semibold mb-2">正在计算…</h3>
                 <p className="text-sm text-muted-foreground mb-6">
                   这可能需要几秒到几分钟，取决于数据量和分组配置
                 </p>
@@ -156,12 +156,12 @@ export function ComputePage() {
             {status === "success" && (
               <>
                 <CheckCircle2 className="h-16 w-16 text-green-600 mb-4" />
-                <h3 className="text-lg font-semibold mb-2">计算完成！</h3>
+                <h3 className="text-lg font-semibold mb-2">计算完成</h3>
                 <p className="text-sm text-muted-foreground mb-2">
                   耗时: {computationTime.toFixed(2)} ms
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  正在跳转到结果页面...
+                  正在跳转到结果页…
                 </p>
               </>
             )}
@@ -260,7 +260,7 @@ export function ComputePage() {
           {status === "error" && (
             <Alert variant="destructive">
               <AlertDescription>
-                计算过程出现错误，请检查配置是否正确或联系技术支持
+                计算过程出现错误，请返回上一步检查配置后重试
               </AlertDescription>
             </Alert>
           )}

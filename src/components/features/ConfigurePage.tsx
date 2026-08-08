@@ -482,7 +482,7 @@ export function ConfigurePage() {
       {existingRun && (
         <Alert>
           <AlertDescription>
-            当前已有计算结果。修改配置并重新计算后，将开始新的一次运行，现有结果与其全部候选将被替换。
+            已有一份计算结果。重新计算后，现有结果和它的全部候选会被替换。
           </AlertDescription>
         </Alert>
       )}
@@ -545,7 +545,7 @@ export function ConfigurePage() {
             <Dices className="h-5 w-5" />
             分组方式
           </CardTitle>
-          <CardDescription>默认值由场景决定；禁用项会说明原因，不会静默隐藏</CardDescription>
+          <CardDescription>默认方式由场景决定；不可用的方法会标明原因</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {methodNotice && (

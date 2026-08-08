@@ -87,7 +87,7 @@ export function ResultsPage() {
       });
 
       // Show success message
-      alert("导出成功！");
+      alert("导出成功");
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
     }
@@ -482,7 +482,7 @@ export function ResultsPage() {
         <CardHeader>
           <CardTitle>统计检验结果</CardTitle>
           <CardDescription>
-            各指标的方差齐性检验(Levene)和组间差异检验(t/ANOVA) P值
+            各指标的 Levene 方差齐性检验与组间差异检验（t / ANOVA）P 值
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -572,16 +572,16 @@ export function ResultsPage() {
           {/* Legend */}
           <div className="mt-4 text-sm text-muted-foreground">
             <p>
-              • <strong>Levene检验</strong>: P &gt; {alpha} 表示方差齐性良好，决定采用哪种差异检验
+              • <strong>Levene 检验</strong>：P &gt; {alpha} 表示方差齐性良好，决定采用哪种差异检验
             </p>
             <p>
-              • <strong>差异检验</strong>: P &gt; {alpha} 表示组间整体无显著差异
+              • <strong>差异检验</strong>：P &gt; {alpha} 表示组间整体无显著差异
             </p>
             <p>
-              • <strong>最严格两两比较</strong>: 该指标所有组间两两比较中 P 值最小的一对
+              • <strong>最严格两两比较</strong>：该指标所有组间两两比较中 P 值最小的一对
             </p>
             <p>
-              • <strong>通过</strong>: 差异检验与全部两两比较的 P 均 &gt; {alpha}
+              • <strong>通过</strong>：差异检验与全部两两比较的 P 均 &gt; {alpha}
             </p>
           </div>
         </CardContent>
