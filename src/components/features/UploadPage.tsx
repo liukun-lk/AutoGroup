@@ -8,8 +8,15 @@ import { datasetAtom, currentStepAtom, clearErrorAtom, resetStateAtom } from "@/
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle } from "lucide-react";
+import { Upload, FileSpreadsheet, CheckCircle2, AlertCircle, History, X } from "lucide-react";
 import type { Dataset } from "@/types";
+import {
+  loadRecentImports,
+  recordRecentImport,
+  removeRecentImport,
+  formatImportTime,
+  type RecentImport,
+} from "@/lib/recent-files";
 
 export function UploadPage() {
   const [dataset, setDataset] = useAtom(datasetAtom);
@@ -20,6 +27,7 @@ export function UploadPage() {
   const [localError, setLocalError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [dragFileValid, setDragFileValid] = useState<boolean | null>(null);
+  const [recentImports, setRecentImports] = useState<RecentImport[]>(() => loadRecentImports());
 
   const isExcelFile = (path: string) => /\.(xlsx|xlsm|xls)$/i.test(path);
 
@@ -40,6 +48,7 @@ export function UploadPage() {
       // Parse Excel file via Tauri
       const result = await invoke<Dataset>("parse_excel", { filePath });
 
+      setRecentImports(recordRecentImport(filePath));
       setDataset(result);
       setCurrentStep("configure");
     } catch (error) {
@@ -257,6 +266,45 @@ export function UploadPage() {
             </div>
           </div>
 
+          {/* Recent Imports */}
+          {recentImports.length > 0 && (
+            <div className="border rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <History className="h-4 w-4 text-muted-foreground" />
+                <h4 className="text-sm font-medium">最近导入</h4>
+                <span className="text-xs text-muted-foreground">点击文件名可直接重新导入</span>
+              </div>
+              <ul className="space-y-1">
+                {recentImports.map((item) => (
+                  <li key={item.path} className="flex items-center gap-2 group">
+                    <button
+                      type="button"
+                      onClick={() => handleFileParse(item.path)}
+                      disabled={isLoading}
+                      title={item.path}
+                      className="flex-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <FileSpreadsheet className="h-4 w-4 shrink-0 text-green-600" />
+                      <span className="truncate font-medium">{item.name}</span>
+                      <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
+                        {formatImportTime(item.importedAt)}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRecentImports(removeRecentImport(item.path))}
+                      disabled={isLoading}
+                      title="从最近导入中移除"
+                      className="shrink-0 rounded-md p-1.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-muted hover:text-foreground disabled:opacity-0 transition-opacity"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Dataset Info */}
           {dataset && (
             <Alert className="border-green-200 bg-green-50">
@@ -275,17 +323,111 @@ export function UploadPage() {
 
           {/* Requirements */}
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <h4 className="font-medium text-blue-900 mb-2">文件格式要求：</h4>
-            <ul className="text-sm text-blue-800 space-y-1">
-              <li>• 文件格式为 .xlsx（旧版 .xls 请先在 Excel 中另存为 .xlsx）</li>
-              <li>• 第一个 sheet 为"原始数据"</li>
-              <li>• Row 1: 英文指标名或单位（kg, ℃, ALT...）</li>
-              <li>• Row 2: 中文列名或单位（体重, 肛温, U/L...）</li>
-              <li>• Row 3+: 数据行</li>
-              <li>• Column 1: 动物编号</li>
-              <li>• Column 2: 性别（F/M 或 雌性/雄性）</li>
-              <li>• Column 3+: 指标数值</li>
-            </ul>
+            <h4 className="font-medium text-blue-900 mb-1">文件格式要求：</h4>
+            <p className="text-sm text-blue-800 mb-3">
+              文件须为 .xlsx 格式（旧版 .xls 请先在 Excel 中另存为 .xlsx），排版如下：
+            </p>
+
+            {/* Mock Excel preview */}
+            <div className="overflow-x-auto">
+              <table className="border-collapse text-xs whitespace-nowrap">
+                <thead>
+                  <tr className="text-slate-500 font-normal">
+                    <th className="border border-slate-300 bg-slate-100 px-2 py-1 font-normal w-8" />
+                    {["A", "B", "C", "D", "E"].map((col) => (
+                      <th key={col} className="border border-slate-300 bg-slate-100 px-2 py-1 font-normal">
+                        {col}
+                      </th>
+                    ))}
+                    <th className="border border-slate-300 bg-slate-100 px-2 py-1 font-normal">⋯</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody className="text-slate-700">
+                  <tr>
+                    <td className="border border-slate-300 bg-slate-100 px-2 py-1 text-center text-slate-500">1</td>
+                    <td className="border border-slate-300 bg-amber-50 px-2 py-1 italic text-slate-400">（留空）</td>
+                    <td className="border border-slate-300 bg-amber-50 px-2 py-1 italic text-slate-400">（留空）</td>
+                    <td className="border border-slate-300 bg-amber-50 px-2 py-1">kg</td>
+                    <td className="border border-slate-300 bg-amber-50 px-2 py-1">℃</td>
+                    <td className="border border-slate-300 bg-amber-50 px-2 py-1">ALT</td>
+                    <td className="border border-slate-300 bg-amber-50 px-2 py-1 text-center text-slate-400">⋯</td>
+                    <td className="pl-3 text-blue-700">← 第 1 行：英文指标名或单位</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-slate-300 bg-slate-100 px-2 py-1 text-center text-slate-500">2</td>
+                    <td className="border border-slate-300 bg-amber-50 px-2 py-1 font-medium">动物编号</td>
+                    <td className="border border-slate-300 bg-amber-50 px-2 py-1 font-medium">性别</td>
+                    <td className="border border-slate-300 bg-amber-50 px-2 py-1 font-medium">体重</td>
+                    <td className="border border-slate-300 bg-amber-50 px-2 py-1 font-medium">肛温</td>
+                    <td className="border border-slate-300 bg-amber-50 px-2 py-1 font-medium">U/L</td>
+                    <td className="border border-slate-300 bg-amber-50 px-2 py-1 text-center text-slate-400">⋯</td>
+                    <td className="pl-3 text-blue-700">← 第 2 行：中文列名或单位</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-slate-300 bg-slate-100 px-2 py-1 text-center text-slate-500">3</td>
+                    <td className="border border-slate-300 bg-green-50 px-2 py-1">XHP2601001</td>
+                    <td className="border border-slate-300 bg-purple-50 px-2 py-1 text-center">F</td>
+                    <td className="border border-slate-300 bg-white px-2 py-1 text-right">31.85</td>
+                    <td className="border border-slate-300 bg-white px-2 py-1 text-right">38.5</td>
+                    <td className="border border-slate-300 bg-white px-2 py-1 text-right">58.8</td>
+                    <td className="border border-slate-300 bg-white px-2 py-1 text-center text-slate-400">⋯</td>
+                    <td className="pl-3 text-blue-700">← 第 3 行起：一行一只动物</td>
+                  </tr>
+                  <tr>
+                    <td className="border border-slate-300 bg-slate-100 px-2 py-1 text-center text-slate-500">4</td>
+                    <td className="border border-slate-300 bg-green-50 px-2 py-1">XHP2601002</td>
+                    <td className="border border-slate-300 bg-purple-50 px-2 py-1 text-center">M</td>
+                    <td className="border border-slate-300 bg-white px-2 py-1 text-right">30.45</td>
+                    <td className="border border-slate-300 bg-white px-2 py-1 text-right">38.5</td>
+                    <td className="border border-slate-300 bg-white px-2 py-1 text-right">42.2</td>
+                    <td className="border border-slate-300 bg-white px-2 py-1 text-center text-slate-400">⋯</td>
+                    <td />
+                  </tr>
+                  <tr className="text-slate-300">
+                    <td className="border border-slate-300 bg-slate-100 px-2 py-0.5 text-center">⋮</td>
+                    <td className="border border-slate-300 bg-green-50 px-2 py-0.5 text-center">⋮</td>
+                    <td className="border border-slate-300 bg-purple-50 px-2 py-0.5 text-center">⋮</td>
+                    <td className="border border-slate-300 bg-white px-2 py-0.5 text-center">⋮</td>
+                    <td className="border border-slate-300 bg-white px-2 py-0.5 text-center">⋮</td>
+                    <td className="border border-slate-300 bg-white px-2 py-0.5 text-center">⋮</td>
+                    <td className="border border-slate-300 bg-white px-2 py-0.5 text-center">⋮</td>
+                    <td />
+                  </tr>
+                </tbody>
+              </table>
+
+              {/* Sheet tab, like the bottom of an Excel window */}
+              <div className="flex items-center text-xs">
+                <div className="flex items-center border border-t-0 border-slate-300 bg-slate-100 rounded-b-sm">
+                  <span className="bg-white border-r border-slate-300 px-3 py-0.5 font-medium text-slate-700 rounded-bl-sm">
+                    原始数据
+                  </span>
+                  <span className="px-2 text-slate-400">+</span>
+                </div>
+                <span className="pl-3 text-blue-700">← 第一个 sheet 名为「原始数据」</span>
+              </div>
+            </div>
+
+            {/* Column legend */}
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-3 text-xs text-blue-800">
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-3 w-3 rounded-sm border border-amber-300 bg-amber-50" />
+                第 1–2 行：表头
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-3 w-3 rounded-sm border border-green-300 bg-green-50" />
+                A 列：动物编号（不可重复）
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-3 w-3 rounded-sm border border-purple-300 bg-purple-50" />
+                B 列：性别（F/M 或 雌性/雄性）
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block h-3 w-3 rounded-sm border border-slate-300 bg-white" />
+                C 列起：指标数值
+              </span>
+            </div>
           </div>
 
           {/* Next Button */}
