@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoGroup 使用指南 · 实验动物自动分组</title>
+<meta name="description" content="AutoGroup 是一款实验动物自动分组的桌面软件：导入基线数据，按随机化或统计均衡优化分组，导出可审计、可复现的 Excel 报告。">
+<link rel="icon" href="images/icon.png">
+<style>
+  :root {
+    --paper: #f7f5f0;
+    --paper-raised: #fffefb;
+    --ink: #22271f;
+    --ink-soft: #5c6357;
+    --ink-faint: #8a9184;
+    --accent: #1e6b45;
+    --accent-bright: #23935c;
+    --accent-wash: #e4efe6;
+    --rule: #d9d5c9;
+    --rule-soft: #e8e5db;
+    --warn: #9a5b1f;
+    --warn-wash: #f6ecdc;
+    --code-bg: #edeae1;
+    --shadow: 0 1px 2px rgba(34, 39, 31, .05), 0 8px 24px -12px rgba(34, 39, 31, .18);
+    --serif: "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", STSong, SimSun, Georgia, serif;
+    --sans: -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #191c17;
+      --paper-raised: #21251f;
+      --ink: #e6e4da;
+      --ink-soft: #a7ac9d;
+      --ink-faint: #767c6e;
+      --accent: #55b380;
+      --accent-bright: #6cc794;
+      --accent-wash: #24352a;
+      --rule: #3a4034;
+      --rule-soft: #2c3128;
+      --warn: #d9a05b;
+      --warn-wash: #33291a;
+      --code-bg: #2b2f27;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px -12px rgba(0, 0, 0, .5);
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 2rem; }
+  body {
+    font-family: var(--sans);
+    background: var(--paper);
+    color: var(--ink);
+    line-height: 1.85;
+    font-size: 16px;
+    background-image: repeating-linear-gradient(0deg, transparent, transparent 31px, color-mix(in srgb, var(--rule) 24%, transparent) 31px, color-mix(in srgb, var(--rule) 24%, transparent) 32px);
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 248px minmax(0, 1fr);
+    max-width: 1200px;
+    margin: 0 auto;
+    gap: 0 3.5rem;
+    padding: 0 2rem;
+  }
+
+  /* ------- sidebar ------- */
+  nav.toc {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100dvh;
+    overflow-y: auto;
+    padding: 2.5rem 0 2rem;
+    font-size: .84rem;
+    border-right: 1px solid var(--rule-soft);
+  }
+  .toc .brand {
+    display: flex; align-items: center; gap: .6rem;
+    margin-bottom: 1.8rem; padding-right: 1rem;
+  }
+  .toc .brand img { width: 38px; height: 38px; border-radius: 9px; box-shadow: var(--shadow); }
+  .toc .brand b { font-size: 1rem; letter-spacing: .02em; }
+  .toc .brand small { display: block; color: var(--ink-faint); font-size: .72rem; line-height: 1.3; }
+  .toc ol { list-style: none; }
+  .toc li { margin: 0; }
+  .toc a {
+    display: block; padding: .32rem .9rem .32rem .9rem;
+    color: var(--ink-soft); text-decoration: none;
+    border-left: 2px solid transparent;
+    transition: color .15s, border-color .15s, background .15s;
+  }
+  .toc a:hover { color: var(--ink); }
+  .toc a.active {
+    color: var(--accent);
+    border-left-color: var(--accent);
+    background: linear-gradient(90deg, var(--accent-wash), transparent 80%);
+    font-weight: 600;
+  }
+  .toc a.sub { padding-left: 2rem; font-size: .8rem; }
+  .toc .toc-label {
+    margin: 1.4rem 0 .4rem; padding-left: .9rem;
+    font-size: .68rem; letter-spacing: .18em; color: var(--ink-faint);
+  }
+  .toc .repo-link {
+    margin-top: 2rem; padding-left: .9rem;
+  }
+  .toc .repo-link a {
+    display: inline-flex; align-items: center; gap: .4rem;
+    padding: .3rem .7rem; border: 1px solid var(--rule); border-radius: 999px;
+    color: var(--ink-soft); font-size: .76rem;
+  }
+  .toc .repo-link a:hover { border-color: var(--accent); color: var(--accent); background: none; }
+
+  /* ------- main ------- */
+  main { padding: 0 0 6rem; min-width: 0; }
+
+  header.hero {
+    padding: 4.5rem 0 2.6rem;
+    border-bottom: 3px double var(--rule);
+    margin-bottom: 3rem;
+  }
+  .hero .doc-no {
+    font-family: var(--mono); font-size: .72rem; letter-spacing: .22em;
+    color: var(--accent); text-transform: uppercase;
+    display: inline-block; padding: .2rem .7rem;
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    border-radius: 3px; margin-bottom: 1.4rem;
+    background: var(--accent-wash);
+  }
+  .hero h1 {
+    font-family: var(--serif);
+    font-size: clamp(2.1rem, 5vw, 3.1rem);
+    font-weight: 900; line-height: 1.25; letter-spacing: .01em;
+  }
+  .hero h1 em { font-style: normal; color: var(--accent); }
+  .hero p.lede {
+    margin-top: 1.1rem; max-width: 40em; color: var(--ink-soft); font-size: 1.02rem;
+  }
+  .hero .meta {
+    margin-top: 1.6rem; display: flex; flex-wrap: wrap; gap: .6rem 1.6rem;
+    font-family: var(--mono); font-size: .74rem; color: var(--ink-faint);
+  }
+  .hero .meta span::before { content: "·"; margin-right: .5rem; color: var(--rule); }
+  .hero .meta span:first-child::before { content: ""; margin: 0; }
+
+  /* four-step strip */
+  .steps-strip {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 1px; background: var(--rule); border: 1px solid var(--rule);
+    border-radius: 10px; overflow: hidden; margin: 2.4rem 0 0;
+    box-shadow: var(--shadow);
+  }
+  .steps-strip a {
+    background: var(--paper-raised); padding: 1rem 1.1rem .9rem;
+    text-decoration: none; color: inherit; transition: background .15s;
+  }
+  .steps-strip a:hover { background: var(--accent-wash); }
+  .steps-strip .n {
+    font-family: var(--mono); font-size: .7rem; color: var(--accent);
+    letter-spacing: .12em; display: block;
+  }
+  .steps-strip .t { font-weight: 700; font-size: .95rem; }
+  .steps-strip .d { font-size: .76rem; color: var(--ink-faint); line-height: 1.5; display: block; margin-top: .15rem; }
+
+  section { margin-bottom: 4.2rem; }
+  .sec-head { display: flex; align-items: baseline; gap: 1rem; margin-bottom: 1.4rem; }
+  .sec-head .no {
+    font-family: var(--mono); font-weight: 700; font-size: .8rem;
+    color: var(--paper-raised); background: var(--accent);
+    padding: .18rem .55rem; border-radius: 3px; letter-spacing: .08em;
+    flex-shrink: 0; transform: translateY(-.15em);
+  }
+  h2 {
+    font-family: var(--serif); font-size: 1.75rem; font-weight: 900; line-height: 1.4;
+  }
+  h3 {
+    font-family: var(--serif); font-size: 1.22rem; font-weight: 700;
+    margin: 2.3rem 0 .9rem; padding-left: .8rem;
+    border-left: 3px solid var(--accent);
+  }
+  p { margin: .9rem 0; max-width: 46em; }
+  ul, ol { margin: .9rem 0 .9rem 1.5em; max-width: 44em; }
+  li { margin: .3rem 0; }
+  code {
+    font-family: var(--mono); font-size: .84em;
+    background: var(--code-bg); padding: .12em .4em; border-radius: 4px;
+  }
+  b, strong { font-weight: 700; }
+
+  /* figure */
+  figure { margin: 1.6rem 0 2rem; }
+  figure img {
+    display: block; width: 100%; height: auto;
+    border: 1px solid var(--rule); border-radius: 10px;
+    box-shadow: var(--shadow); cursor: zoom-in;
+    background: #fff;
+  }
+  figcaption {
+    margin-top: .55rem; font-size: .78rem; color: var(--ink-faint);
+    font-family: var(--mono); letter-spacing: .04em;
+  }
+  figcaption::before { content: "▣ "; color: var(--accent); }
+
+  /* table */
+  .tbl-wrap { overflow-x: auto; margin: 1.2rem 0; }
+  table { border-collapse: collapse; width: 100%; font-size: .88rem; background: var(--paper-raised); box-shadow: var(--shadow); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: .55rem .9rem; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  th {
+    font-size: .74rem; letter-spacing: .1em; color: var(--ink-soft);
+    background: color-mix(in srgb, var(--accent-wash) 60%, var(--paper-raised));
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  tr:last-child td { border-bottom: none; }
+  td:first-child { font-weight: 600; white-space: nowrap; }
+
+  /* callouts */
+  .note, .warn {
+    border-radius: 8px; padding: .85rem 1.1rem; margin: 1.3rem 0;
+    font-size: .9rem; max-width: 46em; border: 1px solid;
+  }
+  .note { background: var(--accent-wash); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+  .note::before { content: "说明"; }
+  .warn { background: var(--warn-wash); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+  .warn::before { content: "注意"; color: var(--warn); }
+  .note::before, .warn::before {
+    display: block; font-family: var(--mono); font-size: .68rem;
+    letter-spacing: .2em; margin-bottom: .25rem; color: var(--accent);
+  }
+
+  /* keyboard */
+  kbd {
+    font-family: var(--mono); font-size: .8em; padding: .1em .45em;
+    border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 4px;
+    background: var(--paper-raised);
+  }
+
+  /* FAQ */
+  details {
+    border: 1px solid var(--rule); border-radius: 8px;
+    margin: .7rem 0; background: var(--paper-raised);
+    max-width: 46em; overflow: hidden;
+  }
+  summary {
+    cursor: pointer; padding: .8rem 1.1rem; font-weight: 600;
+    list-style: none; position: relative; padding-right: 2.6rem;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::after {
+    content: "+"; position: absolute; right: 1.1rem; top: 50%;
+    transform: translateY(-50%); font-family: var(--mono);
+    color: var(--accent); font-size: 1.1rem; transition: transform .2s;
+  }
+  details[open] summary::after { transform: translateY(-50%) rotate(45deg); }
+  details .a { padding: 0 1.1rem .9rem; color: var(--ink-soft); font-size: .92rem; }
+  details[open] summary { border-bottom: 1px dashed var(--rule-soft); margin-bottom: .5rem; }
+
+  footer {
+    border-top: 3px double var(--rule); padding: 2rem 0 3rem;
+    font-size: .8rem; color: var(--ink-faint);
+    display: flex; flex-wrap: wrap; gap: .5rem 2rem; justify-content: space-between;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  /* lightbox */
+  .lightbox {
+    position: fixed; inset: 0; z-index: 99;
+    background: rgba(15, 18, 14, .92);
+    display: none; align-items: center; justify-content: center;
+    padding: 3vmin; cursor: zoom-out;
+  }
+  .lightbox.on { display: flex; }
+  .lightbox img {
+    max-width: 100%; max-height: 100%;
+    border-radius: 8px; box-shadow: 0 24px 80px rgba(0,0,0,.6);
+  }
+
+  ::selection { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; gap: 0; padding: 0 1.2rem; }
+    nav.toc { display: none; }
+    .steps-strip { grid-template-columns: 1fr 1fr; }
+    header.hero { padding-top: 2.6rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+<nav class="toc" aria-label="目录">
+  <div class="brand">
+    <img src="images/icon.png" alt="AutoGroup 图标">
+    <div><b>AutoGroup</b><small>使用指南</small></div>
+  </div>
+  <div class="toc-label">目 录</div>
+  <ol>
+    <li><a href="#overview">整体流程</a></li>
+    <li><a href="#data">准备数据文件</a></li>
+    <li><a href="#upload">第一步 · 上传数据</a></li>
+    <li><a href="#configure">第二步 · 配置参数</a></li>
+    <li><a href="#configure-scenario" class="sub">场景与分组方式</a></li>
+    <li><a href="#configure-groups" class="sub">分组配置</a></li>
+    <li><a href="#configure-stats" class="sub">统计参数与指标</a></li>
+    <li><a href="#compute">第三步 · 计算分组</a></li>
+    <li><a href="#results">第四步 · 查看结果</a></li>
+    <li><a href="#results-candidates" class="sub">候选分组</a></li>
+    <li><a href="#results-stats" class="sub">统计检验结果</a></li>
+    <li><a href="#results-posthoc" class="sub">组间两两比较</a></li>
+    <li><a href="#export" class="sub">导出结果</a></li>
+    <li><a href="#faq">常见问题</a></li>
+  </ol>
+  <div class="repo-link">
+    <a href="https://github.com/liukun-lk/AutoGroup" target="_blank" rel="noopener">GitHub 仓库 ↗</a>
+  </div>
+</nav>
+
+<main>
+
+<header class="hero">
+  <span class="doc-no">User Guide · v0.1.6</span>
+  <h1>实验动物分组，<br>从手工排表到<em>一次计算</em></h1>
+  <p class="lede">AutoGroup 是一款实验动物自动分组的桌面软件。导入动物基线数据后，软件按所选方法（随机化或统计均衡优化）给出分组方案，并对每个指标做组间均衡性检验，最后导出可供审计与复现的 Excel 报告。</p>
+  <div class="meta">
+    <span>适用：实验人员</span>
+    <span>平台：macOS / Windows</span>
+    <span>截图基于 v0.1.6 开发版</span>
+  </div>
+
+  <div class="steps-strip" id="overview">
+    <a href="#upload"><span class="n">STEP 01</span><span class="t">上传数据</span><span class="d">导入动物编号、性别与各项指标</span></a>
+    <a href="#configure"><span class="n">STEP 02</span><span class="t">配置参数</span><span class="d">场景、分组方式、配额与统计参数</span></a>
+    <a href="#compute"><span class="n">STEP 03</span><span class="t">计算分组</span><span class="d">随机化或均衡优化，通常几秒完成</span></a>
+    <a href="#results"><span class="n">STEP 04</span><span class="t">查看结果</span><span class="d">核对名单与检验结果，导出报告</span></a>
+  </div>
+</header>
+
+<section id="data">
+  <div class="sec-head"><span class="no">准备</span><h2>准备数据文件</h2></div>
+  <p>文件须为 <code>.xlsx</code> 格式（旧版 <code>.xls</code> 请先在 Excel 中另存为 <code>.xlsx</code>），第一个工作表须命名为「原始数据」，排版要求：</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>位置</th><th>内容</th></tr></thead>
+    <tbody>
+      <tr><td>第 1 行</td><td>英文指标名或单位（A、B 两列留空）</td></tr>
+      <tr><td>第 2 行</td><td>中文列名或单位（A 列「动物编号」、B 列「性别」）</td></tr>
+      <tr><td>第 3 行起</td><td>一行一只动物</td></tr>
+    </tbody>
+  </table></div>
+  <ul>
+    <li>A 列：动物编号，不可重复。</li>
+    <li>B 列：性别，填 <code>F</code>/<code>M</code> 或「雌性」/「雄性」。</li>
+    <li>C 列起：各项指标数值。</li>
+  </ul>
+  <p>上传页内置了同样的格式示意，导入失败时可对照逐项检查。</p>
+</section>
+
+<section id="upload">
+  <div class="sec-head"><span class="no">STEP 01</span><h2>上传数据</h2></div>
+  <figure>
+    <img src="images/user-guide/upload.png" alt="上传数据页面" loading="lazy">
+    <figcaption>图 1 · 上传数据页，含格式要求示意与最近导入列表</figcaption>
+  </figure>
+  <p>导入有三种方式，任选其一：</p>
+  <ul>
+    <li>点击「选择文件」，在对话框中选取 Excel 文件；</li>
+    <li>把文件拖进虚线区域；</li>
+    <li>在访达 / 资源管理器中复制文件，回到本页按 <kbd>Cmd</kbd>+<kbd>V</kbd>（Windows 为 <kbd>Ctrl</kbd>+<kbd>V</kbd>）粘贴。</li>
+  </ul>
+  <p>成功导入过的文件会出现在「最近导入」列表中，下次点击文件名即可直接重新导入。</p>
+  <p>解析成功后，页面显示总动物数、雄雌数量和指标数量。确认与预期一致后，点击「下一步：配置分组参数」。</p>
+  <figure>
+    <img src="images/user-guide/upload-parsed.png" alt="解析成功后的上传页" loading="lazy">
+    <figcaption>图 2 · 解析成功：9 只动物（6 雄 3 雌）、73 个指标</figcaption>
+  </figure>
+  <p>若解析失败，页面会给出具体原因。常见原因：工作表名不是「原始数据」、表头行缺失、动物编号重复、性别列出现无法识别的取值。</p>
+</section>
+
+<section id="configure">
+  <div class="sec-head"><span class="no">STEP 02</span><h2>配置参数</h2></div>
+
+  <h3 id="configure-scenario">应用场景与分组方式</h3>
+  <figure>
+    <img src="images/user-guide/configure-scenario-method.png" alt="应用场景与分组方式" loading="lazy">
+    <figcaption>图 3 · 声明应用场景后选择分组方式</figcaption>
+  </figure>
+  <p>先声明这次分组用在什么场景：GLP 申报实验、确证性临床试验，还是探索性 / 非 GLP 实验。场景决定可用的分组方式：软件会推荐合适的方法，与该场景监管口径冲突的方法会被禁用，原因直接标注在选项上。</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>方式</th><th>机制</th></tr></thead>
+    <tbody>
+      <tr><td>按主指标分层随机</td><td>按性别与主指标分层，层内洗牌后按配额发牌；主指标的均衡由构造保证</td></tr>
+      <tr><td>完全随机</td><td>种子化洗牌后按配额分配，不读取任何指标值</td></tr>
+      <tr><td>受限随机化</td><td>完全随机加基线均衡接受准则，不达标则按同一随机序列重抽</td></tr>
+      <tr><td>最小化法</td><td>逐只分配，每次以概率 p 分给使协变量不平衡度最小的组</td></tr>
+      <tr><td>统计均衡优化</td><td>枚举或采样全部候选划分，按 min(P) 与 mean(P) 择优，不属于随机化</td></tr>
+    </tbody>
+  </table></div>
+  <p>选择随机化方法时会出现「随机种子」输入框：留空则自动生成；种子会随结果一并记录并写入导出文件，用于日后复现同一次分配。统计均衡优化不需要用户提供种子。</p>
+  <div class="warn">统计均衡优化的结果不能用于申报材料，导出文件会如实标注其分组原理。</div>
+
+  <h3 id="configure-groups">分组配置</h3>
+  <figure>
+    <img src="images/user-guide/configure-groups.png" alt="分组配置" loading="lazy">
+    <figcaption>图 4 · 组数、每组动物数与性别配额</figcaption>
+  </figure>
+  <p>设置分组数量和每组动物数，页面实时显示「实验组可用动物数」与「当前配置需要」的数量对比。</p>
+  <p>「性别约束」区域为每个组设置雄性 / 雌性配额。修改组数或每组动物数后配额会自动重新分配，也可以逐组手动调整。</p>
+  <p>备用动物是一个特殊分组：留作补充替换的动物放在这里，不参与统计检验，也不计入分组数量。配置需要的动物数少于可用数时，页面会提示把剩余动物设为备用。</p>
+
+  <h3 id="configure-stats">统计参数与指标选择</h3>
+  <figure>
+    <img src="images/user-guide/configure-stats-indicators.png" alt="统计参数与指标选择" loading="lazy">
+    <figcaption>图 5 · 显著性水平、优化模式与参与统计的指标</figcaption>
+  </figure>
+  <ul>
+    <li>显著性水平 (α)：常用 0.05 或 0.01。</li>
+    <li>优化模式二选一。严格模式要求所有参与指标的 P 值都大于 α；优化模式允许至多 1 个指标 P ≤ α，在此前提下依次最大化 min(P) 与 mean(P)。</li>
+  </ul>
+  <p>「选择参与统计的指标」列出全部已解析指标。文本类字段（如样本号、FULLNAME）已默认排除，需要时可手动勾选；也可用「全选」「清空」批量操作。至少选择一个指标才能开始计算。</p>
+  <p>确认无误后点击「开始计算」。</p>
+</section>
+
+<section id="compute">
+  <div class="sec-head"><span class="no">STEP 03</span><h2>计算分组</h2></div>
+  <figure>
+    <img src="images/user-guide/compute-done.png" alt="计算完成" loading="lazy">
+    <figcaption>图 6 · 计算完成，页面自动跳转到结果页</figcaption>
+  </figure>
+  <p>计算页显示本次使用的全部参数，供最后核对。计算耗时取决于数据量和分组配置，小规模数据（几十只动物）通常在几秒内完成；完成后自动跳转到结果页。</p>
+  <p>若提示「计算失败」，多数是当前约束下不存在满足条件的方案，参见<a href="#faq">常见问题</a>。</p>
+</section>
+
+<section id="results">
+  <div class="sec-head"><span class="no">STEP 04</span><h2>查看结果</h2></div>
+
+  <h3>结果概览</h3>
+  <figure>
+    <img src="images/user-guide/results-overview.png" alt="结果概览" loading="lazy">
+    <figcaption>图 7 · 总动物数、分组数量、合格指标与耗时</figcaption>
+  </figure>
+  <p>顶部四个卡片汇总本次计算：总动物数、分组数量、合格指标数（P &gt; α 的指标 / 参与指标）和计算耗时。</p>
+
+  <h3 id="results-candidates">候选分组</h3>
+  <figure>
+    <img src="images/user-guide/results-candidates.png" alt="候选分组" loading="lazy">
+    <figcaption>图 8 · Top-N 候选方案，按 min(P) 与 mean(P) 降序</figcaption>
+  </figure>
+  <p>统计均衡优化会返回 Top-N 个候选方案，按 min(P) 与 mean(P) 降序排列。点击任一候选即可切换下方所有结果视图。导出时用的就是当前选中的这个候选。</p>
+
+  <h3>分组方法与可追溯性</h3>
+  <figure>
+    <img src="images/user-guide/results-traceability.png" alt="分组方法与可追溯性" loading="lazy">
+    <figcaption>图 9 · 场景与分组方式记录，随机化方法还会显示种子</figcaption>
+  </figure>
+  <p>记录本次分组声明的应用场景与实际使用的分组方式（随机化方法还会显示种子等信息）。同样的内容会写入导出文件的「汇总信息」表，供审计与复现使用。</p>
+
+  <h3>分组结果</h3>
+  <figure>
+    <img src="images/user-guide/results-groups.png" alt="分组结果" loading="lazy">
+    <figcaption>图 10 · 每组动物名单</figcaption>
+  </figure>
+  <p>按组列出每只动物的编号，用于核对名单。</p>
+
+  <h3 id="results-stats">统计检验结果</h3>
+  <figure>
+    <img src="images/user-guide/results-stats.png" alt="统计检验结果" loading="lazy">
+    <figcaption>图 11 · 各指标的 Levene P、差异检验 P 与最严格两两比较</figcaption>
+  </figure>
+  <p>每个指标一行，列含义：</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>列</th><th>含义</th></tr></thead>
+    <tbody>
+      <tr><td>Levene P 值</td><td>方差齐性检验的 P 值，决定后续用哪种差异检验</td></tr>
+      <tr><td>差异检验 P 值</td><td>组间差异检验（两组用 t 检验，三组及以上用 ANOVA）的 P 值</td></tr>
+      <tr><td>最严格两两比较</td><td>事后检验中 P 值最小的一对组及其 P 值</td></tr>
+      <tr><td>状态</td><td>该指标是否通过（P &gt; α）</td></tr>
+    </tbody>
+  </table></div>
+  <p>检验方法由软件自动选择：方差齐时用 Student t 检验 / 普通 ANOVA + Tukey HSD，方差不齐时用 Welch t 检验 / Welch ANOVA + Dunnett T3。</p>
+
+  <h3 id="results-posthoc">组间两两比较</h3>
+  <figure>
+    <img src="images/user-guide/results-posthoc.png" alt="组间两两比较" loading="lazy">
+    <figcaption>图 12 · 每对实验组的事后检验 P 值，全部配对都会列出</figcaption>
+  </figure>
+  <p>三组及以上设计在整体检验之外，还给出每一对实验组之间的事后检验 P 值，全部配对都会列出。顶部横幅汇总是否全部通过，并标出最接近显著的一对。</p>
+  <p>点击任一指标行可展开完整的两两比较矩阵，底色按 P 值分档，便于快速定位偏低的比较：</p>
+  <figure>
+    <img src="images/user-guide/results-posthoc-expanded.png" alt="展开的两两比较矩阵" loading="lazy">
+    <figcaption>图 13 · 展开后的两两比较矩阵</figcaption>
+  </figure>
+  <p>两组设计没有事后比较环节，此区域不显示。</p>
+
+  <h3 id="export">导出结果</h3>
+  <p>点击右下角「导出结果」，选择保存位置（默认文件名 <code>grouping_result.xlsx</code>）。导出的工作簿包含：</p>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>工作表</th><th>内容</th></tr></thead>
+    <tbody>
+      <tr><td>分组结果</td><td>一行一只动物，双行表头（单位 + 列名），每个实验组后附「均值±标准差」行</td></tr>
+      <tr><td>统计结果</td><td>每个指标的 Levene P、差异检验 P、检验方法与结论</td></tr>
+      <tr><td>事后比较</td><td>每对组每个指标一行的事后检验 P 值（两组设计无此表）</td></tr>
+      <tr><td>汇总信息</td><td>应用场景、分组方式、参数与耗时等，供审计与复现</td></tr>
+    </tbody>
+  </table></div>
+  <p>随机化方法的导出会额外包含审计列：「随机数」记录每只动物的抽签值；按主指标分层随机还会有「区组」列。审阅者在 Excel 中按区组和随机数重新排序，即可手工复核每只动物的组别分配；配合记录的种子，可以完整复现该次分配。</p>
+  <p>底部的「返回修改配置」保留数据回到第二步，「重新开始」清空全部状态回到第一步。</p>
+</section>
+
+<section id="faq">
+  <div class="sec-head"><span class="no">FAQ</span><h2>常见问题</h2></div>
+
+  <details>
+    <summary>导入时提示解析失败</summary>
+    <div class="a">按上传页的「文件格式要求」逐项检查：文件是否为 <code>.xlsx</code>、第一个工作表是否名为「原始数据」、前两行表头是否完整、动物编号是否重复、性别列取值是否为 <code>F</code>/<code>M</code> 或「雌性」/「雄性」。</div>
+  </details>
+  <details>
+    <summary>提示找不到有效分组（计算失败）</summary>
+    <div class="a">严格模式要求所有指标 P &gt; α，个别离群动物可能让任何划分都无法全部通过。可依次尝试：改用优化模式（允许 1 个指标不达标）、减少参与统计的指标、把可疑动物移入备用组。</div>
+  </details>
+  <details>
+    <summary>分组数量 × 每组动物数与总数对不上</summary>
+    <div class="a">实验组需要的动物数不能超过可用总数；有剩余动物时，建议将其设为备用动物，而不是留在实验组配额之外。</div>
+  </details>
+  <details>
+    <summary>如何复现一次历史分组？</summary>
+    <div class="a">随机化方法：用导出文件「汇总信息」中记录的种子，以相同数据和配置重新计算。统计均衡优化：结果由数据和配置唯一决定，相同输入重算即可得到相同结果。</div>
+  </details>
+</section>
+
+<footer>
+  <span>AutoGroup · 动物实验智能分组系统</span>
+  <span><a href="https://github.com/liukun-lk/AutoGroup" target="_blank" rel="noopener">GitHub</a> · <a href="user_guide.md">Markdown 版指南</a></span>
+</footer>
+
+</main>
+</div>
+
+<div class="lightbox" id="lightbox" role="dialog" aria-label="放大查看截图"><img alt=""></div>
+
+<script>
+(function () {
+  // lightbox
+  var box = document.getElementById("lightbox");
+  var boxImg = box.querySelector("img");
+  document.querySelectorAll("figure img").forEach(function (img) {
+    img.addEventListener("click", function () {
+      boxImg.src = img.src;
+      boxImg.alt = img.alt;
+      box.classList.add("on");
+    });
+  });
+  box.addEventListener("click", function () { box.classList.remove("on"); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") box.classList.remove("on");
+  });
+
+  // scrollspy
+  var links = Array.prototype.slice.call(document.querySelectorAll("nav.toc a[href^='#']"));
+  var targets = links
+    .map(function (a) { return document.getElementById(a.getAttribute("href").slice(1)); })
+    .filter(Boolean);
+  function refresh() {
+    var pos = window.scrollY + 120;
+    var current = targets[0];
+    targets.forEach(function (t) { if (t.offsetTop <= pos) current = t; });
+    links.forEach(function (a) {
+      a.classList.toggle("active", current && a.getAttribute("href") === "#" + current.id);
+    });
+  }
+  window.addEventListener("scroll", refresh, { passive: true });
+  refresh();
+})();
+</script>
+
+</body>
+</html>
