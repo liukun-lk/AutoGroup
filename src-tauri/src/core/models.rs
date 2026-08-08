@@ -140,11 +140,14 @@ pub enum GroupingMethod {
     /// Blocked randomization on a primary indicator, optionally plus the acceptance
     /// criterion for the remaining indicators.
     BlockedRandom,
-    /// Sequential covariate-adaptive minimization (Pocock-Simon). Reserved, not implemented.
+    /// Sequential covariate-adaptive minimization (Pocock-Simon).
     Minimization,
 }
 
 impl GroupingMethod {
+    /// The pure randomization family. Kept deliberately narrow because it drives the
+    /// wording on export: minimization has a random component but allocates by an
+    /// imbalance rule, and calling it "randomized" in a submission would overstate it.
     pub fn is_randomized(&self) -> bool {
         matches!(
             self,
@@ -152,6 +155,15 @@ impl GroupingMethod {
                 | GroupingMethod::ConstrainedRandom
                 | GroupingMethod::BlockedRandom
         )
+    }
+
+    /// Whether this method draws from the seeded RNG, and therefore needs a
+    /// [`RandomizationConfig`] and produces a [`RandomizationRecord`].
+    ///
+    /// This is the predicate to gate configuration on; `is_randomized` answers a
+    /// different question and using it here would leave minimization without a seed.
+    pub fn uses_random_source(&self) -> bool {
+        !matches!(self, GroupingMethod::Optimized)
     }
 
     pub fn to_chinese(&self) -> &'static str {
@@ -200,6 +212,57 @@ pub struct RandomizationConfig {
     /// later draws (exploratory only) derive their seed from (base_seed, draw_index).
     #[serde(default = "default_draw_index")]
     pub draw_index: usize,
+    /// Minimization-specific parameters. Required when `method == Minimization`, and
+    /// rejected for every other method.
+    #[serde(default)]
+    pub minimization: Option<MinimizationConfig>,
+}
+
+/// Parameters of a sequential covariate-adaptive minimization (Pocock-Simon) run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MinimizationConfig {
+    /// Indicator keys used as balancing covariates. Numeric, complete, deduplicated,
+    /// at least one. Deliberately separate from `StatConfig.selected_indicators`: what a
+    /// run balances on and what it is later tested on are two different declarations.
+    pub covariates: Vec<String>,
+    /// Probability of allocating to a minimizer, in the open interval (0, 1).
+    ///
+    /// p = 1 is rejected rather than merely discouraged: it removes the random component
+    /// entirely, at which point the method is a deterministic search and no longer
+    /// belongs on the randomization side of the export wording.
+    #[serde(default = "default_allocation_probability")]
+    pub allocation_probability: f64,
+    /// How continuous covariates are turned into levels.
+    #[serde(default)]
+    pub binning: CovariateBinning,
+}
+
+fn default_allocation_probability() -> f64 {
+    0.8
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CovariateBinning {
+    /// Tertiles cut inside each sex stratum, on values rather than ranks, ties kept in
+    /// the same level.
+    #[default]
+    Tertiles,
+}
+
+impl CovariateBinning {
+    /// Identifier written into the record, so an archived run says which scheme produced
+    /// its levels even after a later version adds more schemes.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CovariateBinning::Tertiles => "tertiles-within-sex",
+        }
+    }
+
+    pub fn to_chinese(&self) -> &'static str {
+        match self {
+            CovariateBinning::Tertiles => "性别层内三分位",
+        }
+    }
 }
 
 /// Sized for the worst case in the design doc: a 70-indicator dataset under Strict has
@@ -220,6 +283,7 @@ impl Default for RandomizationConfig {
             acceptance: None,
             max_attempts: default_max_attempts(),
             draw_index: default_draw_index(),
+            minimization: None,
         }
     }
 }
@@ -337,6 +401,62 @@ pub struct RandomizationRecord {
     pub calibrated_threshold: Option<f64>,
     /// How many seeded simulation draws produced the cutoff.
     pub calibration_draws: Option<usize>,
+    /// Present only for `Minimization`.
+    #[serde(default)]
+    pub minimization: Option<MinimizationRecord>,
+}
+
+/// What a minimization run actually did.
+///
+/// Sized to answer the two questions a reviewer asks of an adaptive allocation: what was
+/// the declared rule, and was it followed for every animal. The parameters answer the
+/// first, `decisions` answers the second.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MinimizationRecord {
+    pub covariates: Vec<String>,
+    /// Binning scheme identifier, e.g. "tertiles-within-sex".
+    pub binning: String,
+    /// The cut points binning actually produced, one entry per covariate. Without these
+    /// the method description says "tertiles" and nothing can check what that meant.
+    pub bins: Vec<CovariateBins>,
+    pub allocation_probability: f64,
+    /// Imbalance measure identifier. A later engine reading an archived record has to be
+    /// able to tell which formula produced it.
+    pub imbalance_measure: String,
+    /// Allocation rule identifier: where the 1 - p probability mass went.
+    pub allocation_rule: String,
+    /// Per-animal decision log, in entry order.
+    pub decisions: Vec<MinimizationDecision>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CovariateBins {
+    pub covariate: String,
+    /// One entry per sex stratum present in the dataset.
+    pub strata: Vec<CovariateStratumBins>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CovariateStratumBins {
+    pub sex: Sex,
+    /// Boundaries between adjacent levels; `levels == cut_points.len() + 1`.
+    pub cut_points: Vec<f64>,
+    pub levels: usize,
+}
+
+/// One step of the sequential allocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MinimizationDecision {
+    /// 1-based position in the seeded entry order.
+    pub entry_index: usize,
+    pub animal_id: String,
+    /// Level index per covariate, aligned with `MinimizationRecord.covariates`.
+    pub levels: Vec<usize>,
+    /// Imbalance score per group id; groups that were not eligible carry `None`.
+    pub scores: Vec<Option<f64>>,
+    /// True when the animal went to a minimizer, false when the 1 - p branch fired.
+    pub took_minimizer: bool,
+    pub group_id: usize,
 }
 
 /// `Eq` is deliberately not derived: `random_number` is a float. Assignments are compared
@@ -346,18 +466,26 @@ pub struct GroupAssignment {
     pub animal_id: String,
     pub sex: Sex,
     pub group_id: usize,
-    /// The draw this animal received, for the randomized methods only.
+    /// The draw this animal received, for the pure randomization methods only.
     ///
-    /// This is not a decorative number: the allocation *is* "sort by it inside the block,
-    /// then deal each group its quota in turn", so exporting it lets a reviewer re-sort
-    /// the sheet and confirm every animal's group by hand — the same check the lab used
-    /// to do with an Excel `RAND()` column, except this one is reproducible from a seed.
+    /// This is not a decorative number: for those methods the allocation *is* "sort by it
+    /// inside the block, then deal each group its quota in turn", so exporting it lets a
+    /// reviewer re-sort the sheet and confirm every animal's group by hand — the same
+    /// check the lab used to do with an Excel `RAND()` column, except this one is
+    /// reproducible from a seed. Minimization leaves it `None`: its allocation is a
+    /// sequential decision chain, and publishing a per-animal draw there would advertise
+    /// a hand check that does not exist.
     #[serde(default)]
     pub random_number: Option<f64>,
     /// 1-based block this animal fell in, for blocked randomization only. The draw is
     /// sorted *within* a block, so the block is needed alongside the number to redo it.
     #[serde(default)]
     pub block_index: Option<usize>,
+    /// 1-based position in the seeded entry order, for minimization only. The order the
+    /// animals entered is what the decision log is indexed by, so it is the field that
+    /// ties the exported grouping back to that log.
+    #[serde(default)]
+    pub entry_index: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

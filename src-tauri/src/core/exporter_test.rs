@@ -422,6 +422,7 @@ mod export_integration_tests {
                 acceptance: Some(AcceptanceCriterion::TopFraction { target_rate: 0.10 }),
                 max_attempts: 10_000,
                 draw_index: 2,
+                minimization: None,
             }),
         };
 
@@ -474,5 +475,139 @@ mod export_integration_tests {
         assert_eq!(value_of("主种子"), "42");
         assert_eq!(value_of("抽签序号"), "2");
         assert_eq!(value_of("随机种子"), record.seed.to_string());
+    }
+
+    /// Minimization's export has to say what it did and offer the only hand check it can:
+    /// the decision log. It must not publish a per-animal draw, because the "sort by this
+    /// column and deal" verification that column implies does not exist here.
+    #[test]
+    fn a_minimization_run_exports_its_entry_order_and_decision_log() {
+        let dataset =
+            parser::parse_excel_file(&fixture_path("tests/fixtures/randomization_input_60f.xlsx"))
+                .expect("fixture must parse");
+
+        let constraints: Vec<SexConstraint> = (0..3)
+            .map(|i| SexConstraint {
+                group_index: i,
+                male_count: 0,
+                female_count: 20,
+                group_type: GroupType::Experimental,
+                custom_name: None,
+            })
+            .collect();
+
+        let indicators = vec!["体重".to_string(), "CD45 比例".to_string()];
+
+        let group_config = GroupConfig {
+            num_groups: 3,
+            animals_per_group: GroupSize::Uniform { value: 20 },
+            sex_constraints: constraints.clone(),
+            scenario: StudyScenario::ConfirmatoryTrial,
+            method: GroupingMethod::Minimization,
+            randomization: Some(RandomizationConfig {
+                seed: Some(2026),
+                minimization: Some(MinimizationConfig {
+                    covariates: vec!["体重".to_string(), "CD45 比例".to_string()],
+                    allocation_probability: 0.8,
+                    binning: CovariateBinning::Tertiles,
+                }),
+                ..Default::default()
+            }),
+        };
+
+        let stat_config = StatConfig {
+            selected_indicators: indicators.clone(),
+            alpha: 0.05,
+            mode: OptimizationMode::Strict,
+            max_candidates: 1,
+        };
+
+        let result = grouping::compute_grouping(dataset.clone(), group_config, stat_config)
+            .expect("minimization must succeed")
+            .candidates
+            .remove(0);
+
+        let output_dir = std::env::temp_dir().join("autogroup_export_minimization");
+        std::fs::create_dir_all(&output_dir).expect("temp dir");
+        let output = output_dir
+            .join("minimization.xlsx")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let sheet_config = exporter::SheetConfig {
+            scenario: StudyScenario::ConfirmatoryTrial,
+            selected_indicators: indicators,
+            include_statistics: true,
+            include_summary: true,
+            group_constraints: Some(constraints),
+        };
+        exporter::export_grouping_result(&result, &dataset, &sheet_config, &output)
+            .expect("export must succeed");
+
+        assert!(
+            sheet_names(&output).contains(&"最小化过程".to_string()),
+            "the decision log is the audit surface; it cannot be optional"
+        );
+
+        // 分组结果: 入组顺序 replaces the draw columns.
+        let grouping_rows = read_sheet(&output, "分组结果");
+        // calamine trims leading empty rows, so the unit row above the header may or may
+        // not survive the round trip; find the header by its content instead.
+        let header = grouping_rows
+            .iter()
+            .find(|row| row.first().map(String::as_str) == Some("组别"))
+            .expect("分组结果 must carry a header row");
+        assert_eq!(header[3], "入组顺序");
+        assert!(
+            !header.iter().any(|cell| cell == "随机数" || cell == "区组"),
+            "a minimization export must not imply a sort-and-deal check: {header:?}"
+        );
+
+        // 汇总信息: principle and stratification row have to tell the same story.
+        let summary = read_sheet(&output, "汇总信息");
+        let value_of = |label: &str| -> String {
+            summary
+                .iter()
+                .find(|row| row.first().map(String::as_str) == Some(label))
+                .unwrap_or_else(|| panic!("summary sheet must contain a {label} row"))
+                .get(1)
+                .cloned()
+                .unwrap_or_default()
+        };
+
+        let principle = value_of("分组原理");
+        assert!(principle.contains("最小化法"), "{principle}");
+        assert!(principle.contains("p = 0.80"), "{principle}");
+        assert!(principle.contains("体重"), "{principle}");
+        assert!(principle.contains("性别层内三分位"), "{principle}");
+
+        let stratification = value_of("分层变量");
+        assert!(
+            stratification.contains("协变量") && stratification.contains("体重"),
+            "the stratification row must not fall back to 性别: {stratification}"
+        );
+        assert_eq!(value_of("分配概率 p"), "0.8");
+        assert!(value_of("不平衡度量").contains("配额归一"));
+
+        // 最小化过程: parameters, cut points, then one row per animal.
+        let process = read_sheet(&output, "最小化过程");
+        let flat: Vec<String> = process.iter().flatten().cloned().collect();
+        assert!(flat.iter().any(|cell| cell == "逐只分配决策"));
+        assert!(flat.iter().any(|cell| cell == "决策分支"));
+        assert!(flat.iter().any(|cell| cell == "切点"));
+
+        let decision_rows = process
+            .iter()
+            .filter(|row| {
+                row.first()
+                    .and_then(|cell| cell.parse::<f64>().ok())
+                    .is_some()
+                    && row
+                        .get(1)
+                        .is_some_and(|id| id.starts_with(char::is_numeric))
+            })
+            .count();
+        assert_eq!(decision_rows, 60, "one logged decision per animal");
     }
 }

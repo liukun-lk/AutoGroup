@@ -54,6 +54,7 @@ fn blocked(seed: u64, enforce: bool) -> RandomizationConfig {
         acceptance: enforce.then_some(AcceptanceCriterion::AlphaLine),
         max_attempts: 1000,
         draw_index: 1,
+        minimization: None,
     }
 }
 
@@ -64,6 +65,7 @@ fn plain(seed: u64) -> RandomizationConfig {
         acceptance: None,
         max_attempts: 1,
         draw_index: 1,
+        minimization: None,
     }
 }
 
@@ -74,6 +76,7 @@ fn constrained_top(seed: u64, target_rate: f64) -> RandomizationConfig {
         acceptance: Some(AcceptanceCriterion::TopFraction { target_rate }),
         max_attempts: 10_000,
         draw_index: 1,
+        minimization: None,
     }
 }
 
@@ -445,6 +448,7 @@ fn tied_primary_values_still_reproduce() {
             acceptance: None,
             max_attempts: 1,
             draw_index: 1,
+            minimization: None,
         },
     );
 
@@ -566,6 +570,7 @@ fn exhausting_the_attempt_budget_reports_the_bottleneck_instead_of_degrading() {
             acceptance: Some(AcceptanceCriterion::AlphaLine),
             max_attempts: 5,
             draw_index: 1,
+            minimization: None,
         },
     );
     let stat = StatConfig {
@@ -602,6 +607,7 @@ fn blocked_random_requires_an_existing_complete_primary_indicator() {
             acceptance: None,
             max_attempts: 1,
             draw_index: 1,
+            minimization: None,
         },
     );
     let err = compute_random_grouping(dataset.clone(), missing_key, stat_config(&[BW]))
@@ -638,6 +644,7 @@ fn method_and_parameters_must_agree() {
             acceptance: Some(AcceptanceCriterion::AlphaLine),
             max_attempts: 10,
             draw_index: 1,
+            minimization: None,
         },
     );
     assert!(compute_random_grouping(dataset.clone(), mismatched, stat_config(&[BW])).is_err());
@@ -838,6 +845,7 @@ fn the_recorded_draw_belongs_to_the_accepted_attempt() {
             acceptance: Some(AcceptanceCriterion::AlphaLine),
             max_attempts: 1000,
             draw_index: 1,
+            minimization: None,
         },
     );
     let result = run(dataset_60f(), config, stat_config(&[BW, CD45]));
@@ -992,6 +1000,7 @@ fn randomization_record_survives_the_ipc_f64_round_trip() {
         seed: MAX_SEED,
         base_seed: MAX_SEED - 12345,
         draw_index: 3,
+        minimization: None,
         rng_algorithm: RNG_ALGORITHM.to_string(),
         input_fingerprint: "deadbeef".to_string(),
         engine_version: engine_version(),
@@ -1047,6 +1056,7 @@ fn alpha_line_acceptance_is_strict_even_under_optimized_mode() {
             acceptance: Some(AcceptanceCriterion::AlphaLine),
             max_attempts: 1000,
             draw_index: 1,
+            minimization: None,
         },
     );
     let stat = StatConfig {

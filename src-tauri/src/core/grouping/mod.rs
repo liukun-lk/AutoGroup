@@ -1,5 +1,6 @@
 pub mod enumerator;
 pub mod evaluator;
+pub mod minimizer;
 pub mod randomizer;
 
 #[cfg(test)]
@@ -38,7 +39,7 @@ pub fn compute_grouping(
     match group_config.method {
         GroupingMethod::Optimized => compute_optimal_grouping(dataset, group_config, stat_config),
         GroupingMethod::Minimization => {
-            bail!("最小化法（序贯协变量自适应随机化）暂未实现，请选择其他分组方式。")
+            minimizer::compute_minimization_grouping(dataset, group_config, stat_config)
         }
         _ => randomizer::compute_random_grouping(dataset, group_config, stat_config),
     }
@@ -62,8 +63,11 @@ fn validate_method_selection(group_config: &GroupConfig) -> Result<()> {
         bail!("统计均衡优化不接受随机化参数（种子 / 主指标 / 接受准则）。");
     }
 
-    if group_config.method.is_randomized() && group_config.randomization.is_none() {
-        bail!("随机化方法必须提供随机化参数。");
+    // Deliberately `uses_random_source` rather than `is_randomized`: minimization is not
+    // in the pure randomization family, but it draws from the seeded stream and is just
+    // as unreproducible without a recorded seed.
+    if group_config.method.uses_random_source() && group_config.randomization.is_none() {
+        bail!("该分组方式必须提供随机化参数。");
     }
 
     Ok(())
